@@ -132,6 +132,7 @@ typedef struct TagUnchangedFrameState {
   const unsigned char* pMacroblocks;
   int32_t   iMacroblockCount;
   int32_t   iChangedMacroblockCount; // entries of pMacroblocks that are zero
+  const SMacroblockMotion* pMotion;  // borrowed motion hints, iMacroblockCount long
   SPicture* pReference;
   int32_t   iFrameNum;
   int32_t   iPoc;

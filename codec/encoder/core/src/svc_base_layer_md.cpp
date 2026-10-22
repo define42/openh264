@@ -1881,6 +1881,8 @@ bool WelsMdFirstIntraMode (sWelsEncCtx* pEncCtx, SWelsMD* pWelsMd, SMB* pCurMb, 
 void WelsMdInterMb (sWelsEncCtx* pEncCtx, SWelsMD* pWelsMd, SSlice* pSlice, SMB* pCurMb, SMbCache* pUnused) {
   if (TryUnchangedMacroblock (pEncCtx, pWelsMd, pSlice, pCurMb))
     return;
+  if (TryMotionHintMacroblock (pEncCtx, pWelsMd, pSlice, pCurMb))
+    return;
   SDqLayer* pCurDqLayer             = pEncCtx->pCurDqLayer;
   SMbCache* pMbCache                = &pSlice->sMbCacheInfo;
   const uint32_t kuiNeighborAvail   = pCurMb->uiNeighborAvail;

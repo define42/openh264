@@ -19,6 +19,8 @@
 #include "svc_enc_slice_segment.h"
 #include "svc_encode_slice.h"
 #include "svc_mode_decision.h"
+#include "svc_motion_estimate.h"
+#include "mv_pred.h"
 
 namespace WelsEnc {
 
@@ -135,6 +137,7 @@ void UnchangedFrameBegin (sWelsEncCtx* pCtx, const SSourcePicture* pSrc) {
   pState->pMacroblocks = NULL;
   pState->iMacroblockCount = 0;
   pState->iChangedMacroblockCount = 0;
+  pState->pMotion = NULL;
   pState->pReuseDestination = NULL;
   pState->uiCodingStamp = 0;
   if (pSrc == NULL || !UnchangedConfiguration (pCtx->pSvcParam))
@@ -154,6 +157,8 @@ void UnchangedFrameBegin (sWelsEncCtx* pCtx, const SSourcePicture* pSrc) {
   const int64_t kiCount = ((int64_t)pSrc->iPicWidth + 15) / 16 * (((int64_t)pSrc->iPicHeight + 15) / 16);
   const bool kbValidPrevious = pState->pReference != NULL && pState->iWidth == pSrc->iPicWidth &&
                                pState->iHeight == pSrc->iPicHeight && pState->iQp == kpParam->sSpatialLayers[0].iDLayerQp;
+  if (kbValidPrevious && pSrc->pMacroblockMotion != NULL && (int64_t)pSrc->iMacroblockMotionCount == kiCount)
+    pState->pMotion = pSrc->pMacroblockMotion;
   if (kbValidPrevious && pSrc->pUnchangedMacroblocks != NULL && (int64_t)pSrc->iUnchangedMacroblockCount == kiCount) {
     pState->pMacroblocks = pSrc->pUnchangedMacroblocks;
     pState->iMacroblockCount = pSrc->iUnchangedMacroblockCount;
@@ -170,6 +175,7 @@ void UnchangedFrameFinish (sWelsEncCtx* pCtx, const SSourcePicture* pSrc, const 
   pState->pMacroblocks = NULL;
   pState->iMacroblockCount = 0;
   pState->iChangedMacroblockCount = 0;
+  pState->pMotion = NULL;
   pState->pReuseDestination = NULL;
   if (!bSuccess || pSrc == NULL || pBsInfo == NULL || !UnchangedConfiguration (pCtx->pSvcParam)) {
     UnchangedFrameReset (pCtx);
@@ -197,6 +203,15 @@ void UnchangedFrameFinish (sWelsEncCtx* pCtx, const SSourcePicture* pSrc, const 
   pState->iHeight = pSrc->iPicHeight;
 }
 
+// The reference is the picture the hints were made against.
+static bool HintReferenceValid (sWelsEncCtx* pCtx) {
+  const SUnchangedFrameState* kpState = &pCtx->sUnchanged;
+  const SPicture* kpReference = pCtx->pCurDqLayer->pRefPic;
+  return pCtx->eSliceType == P_SLICE && pCtx->iNumRef0 == 1 &&
+         kpReference != NULL && kpReference == kpState->pReference && kpReference == pCtx->pRefList0[0] &&
+         kpReference->iFrameNum == kpState->iFrameNum && kpReference->iFramePoc == kpState->iPoc;
+}
+
 static bool UnchangedMacroblockEligible (sWelsEncCtx* pCtx, const SMB* pCurMb) {
   const SUnchangedFrameState* kpState = &pCtx->sUnchanged;
   const int32_t kiIndex = pCurMb->iMbXY;
@@ -205,10 +220,7 @@ static bool UnchangedMacroblockEligible (sWelsEncCtx* pCtx, const SMB* pCurMb) {
     return false;
   const SDqLayer* kpLayer = pCtx->pCurDqLayer;
   const SPicture* kpReference = kpLayer->pRefPic;
-  const bool kbValidReference = pCtx->eSliceType == P_SLICE && pCtx->iNumRef0 == 1 &&
-                                kpReference != NULL && kpReference == kpState->pReference && kpReference == pCtx->pRefList0[0] &&
-                                kpReference->iFrameNum == kpState->iFrameNum && kpReference->iFramePoc == kpState->iPoc;
-  if (!kbValidReference || kpLayer->iLoopFilterDisableIdc != 1 || (int32_t)pCurMb->uiLumaQp != kpState->iQp)
+  if (!HintReferenceValid (pCtx) || kpLayer->iLoopFilterDisableIdc != 1 || (int32_t)pCurMb->uiLumaQp != kpState->iQp)
     return false;
   // Require a previous zero-motion P_SKIP. sMvList is search metadata, which
   // keeps first P frames after an IDR on the full path.
@@ -447,6 +459,70 @@ bool TryUnchangedMacroblock (sWelsEncCtx* pCtx, SWelsMD* pMd, SSlice* pSlice, SM
   if (sPredicted.iMvX != 0 || sPredicted.iMvY != 0)
     return false;
   EncodeUnchangedMacroblock (pCtx, pMd, pSlice, pCurMb);
+  return true;
+}
+
+}
+
+namespace WelsEnc {
+
+// Mirrors the 16x16 path of WelsMdBackgroundMbEnc with the hinted vector in
+// place of the zero vector and of the motion search.
+bool TryMotionHintMacroblock (sWelsEncCtx* pEncCtx, SWelsMD* pWelsMd, SSlice* pSlice, SMB* pCurMb) {
+  const SUnchangedFrameState* kpState = &pEncCtx->sUnchanged;
+  const int32_t kiIndex = pCurMb->iMbXY;
+  if (kpState->pMotion == NULL || kiIndex < 0 || kiIndex >= kpState->iMacroblockCount)
+    return false;
+  const SMVUnitXY kFull = {kpState->pMotion[kiIndex].iX, kpState->pMotion[kiIndex].iY};
+  if ((kFull.iMvX == 0 && kFull.iMvY == 0) || !HintReferenceValid (pEncCtx) ||
+      !CheckMvInRange (kFull, pSlice->sMvStartMin, pSlice->sMvStartMax))
+    return false;
+
+  SDqLayer* pCurDqLayer = pEncCtx->pCurDqLayer;
+  SWelsFuncPtrList* pFunc = pEncCtx->pFuncList;
+  SMbCache* pMbCache = &pSlice->sMbCacheInfo;
+  SMVUnitXY sMv;
+  sMv.iMvX = (int16_t) (kFull.iMvX * 4);
+  sMv.iMvY = (int16_t) (kFull.iMvY * 4);
+  const int32_t kiLineSizeY = pCurDqLayer->pRefPic->iLineSize[0];
+  const int32_t kiLineSizeUV = pCurDqLayer->pRefPic->iLineSize[1];
+  uint8_t* pRefLuma = pMbCache->SPicData.pRefMb[0] + kFull.iMvY * kiLineSizeY + kFull.iMvX;
+  const int32_t kiChromaOffset = (sMv.iMvY >> 3) * kiLineSizeUV + (sMv.iMvX >> 3);
+  uint8_t* pRefCb = pMbCache->SPicData.pRefMb[1] + kiChromaOffset;
+  uint8_t* pRefCr = pMbCache->SPicData.pRefMb[2] + kiChromaOffset;
+  uint8_t* pDstLuma = pMbCache->pMemPredLuma;
+  uint8_t* pDstCb = pMbCache->pMemPredChroma;
+  uint8_t* pDstCr = pMbCache->pMemPredChroma + 64;
+
+  //MC
+  pFunc->sMcFuncs.pMcLumaFunc (pRefLuma, kiLineSizeY, pDstLuma, 16, 0, 0, 16, 16);
+  pFunc->sMcFuncs.pMcChromaFunc (pRefCb, kiLineSizeUV, pDstCb, 8, sMv.iMvX, sMv.iMvY, 8, 8); //Cb
+  pFunc->sMcFuncs.pMcChromaFunc (pRefCr, kiLineSizeUV, pDstCr, 8, sMv.iMvX, sMv.iMvY, 8, 8); //Cr
+
+  pCurMb->pSadCost[0] = pFunc->sSampleDealingFuncs.pfSampleSad[BLOCK_16x16] (pMbCache->SPicData.pEncMb[0],
+                        pCurDqLayer->iEncStride[0], pRefLuma, kiLineSizeY);
+  if (pWelsMd->bMdUsingSad)
+    pWelsMd->iCostLuma = pCurMb->pSadCost[0];
+  else
+    pWelsMd->iCostLuma = pFunc->sSampleDealingFuncs.pfSampleSatd[BLOCK_16x16] (pMbCache->SPicData.pEncMb[0],
+                         pCurDqLayer->iEncStride[0], pRefLuma, kiLineSizeY);
+  pWelsMd->iCostSkipMb = pFunc->sSampleDealingFuncs.pfSampleSad[BLOCK_16x16] (pMbCache->SPicData.pEncMb[0],
+                         pCurDqLayer->iEncStride[0], pDstLuma, 16);
+  pWelsMd->iCostSkipMb += pFunc->sSampleDealingFuncs.pfSampleSad[BLOCK_8x8] (pMbCache->SPicData.pEncMb[1],
+                          pCurDqLayer->iEncStride[1], pDstCb, 8);
+  pWelsMd->iCostSkipMb += pFunc->sSampleDealingFuncs.pfSampleSad[BLOCK_8x8] (pMbCache->SPicData.pEncMb[2],
+                          pCurDqLayer->iEncStride[2], pDstCr, 8);
+  pCurMb->sP16x16Mv = sMv;
+  pCurDqLayer->pDecPic->sMvList[kiIndex] = sMv;
+
+  pCurMb->uiMbType = MB_TYPE_16x16;
+  pWelsMd->sMe.sMe16x16.sMv = sMv;
+  PredMv (&pMbCache->sMvComponents, 0, 4, pWelsMd->uiRef, &pWelsMd->sMe.sMe16x16.sMvp);
+  pMbCache->sMbMvp[0] = pWelsMd->sMe.sMe16x16.sMvp;
+  UpdateP16x16MotionInfo (pMbCache, pCurMb, pWelsMd->uiRef, &sMv);
+
+  WelsMdInterEncode (pEncCtx, pSlice, pCurMb, pMbCache);
+  WelsMdInterDoubleCheckPskip (pCurMb, pMbCache);
   return true;
 }
 

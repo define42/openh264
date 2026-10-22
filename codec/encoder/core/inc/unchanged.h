@@ -38,6 +38,9 @@ void UnchangedFrameReset (TagWelsEncCtx* pCtx);
 bool TryUnchangedMacroblockEarly (TagWelsEncCtx* pCtx, TagWelsMD* pMd, TagSlice* pSlice, TagMB* pCurMb);
 // Inside inter mode decision, with the full median skip predictor.
 bool TryUnchangedMacroblock (TagWelsEncCtx* pCtx, TagWelsMD* pMd, TagSlice* pSlice, TagMB* pCurMb);
+// Inside inter mode decision: codes a macroblock with a motion hint as P16x16
+// with the hinted full-pel vector instead of searching.
+bool TryMotionHintMacroblock (TagWelsEncCtx* pCtx, TagWelsMD* pMd, TagSlice* pSlice, TagMB* pCurMb);
 
 // Where WelsMdInterMbLoop records each finished macroblock: *pStamp when it
 // is a zero-motion P_SKIP, else 0. NULL when this picture records nothing.

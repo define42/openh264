@@ -653,6 +653,12 @@ typedef struct {
   long long uiTimeStamp;
 } SFrameBSInfo, *PFrameBSInfo;
 
+/// DevBox-Gateway-kvm extension: a full-pel luma displacement.
+typedef struct {
+  short iX;
+  short iY;
+} SMacroblockMotion;
+
 /**
 *  @brief Structure for source picture
 */
@@ -673,6 +679,14 @@ typedef struct Source_Picture_s {
   /// this structure so the fields stay disabled.
   const unsigned char* pUnchangedMacroblocks;
   int       iUnchangedMacroblockCount;
+  /// DevBox-Gateway-kvm extension: optional row-major motion hints, one per
+  /// macroblock, in full luma pixels. A nonzero vector suggests that the
+  /// macroblock's source samples equal those of the preceding successfully
+  /// encoded picture at that displacement; the encoder may then code it with
+  /// that vector instead of searching. Residuals are still coded, so a wrong
+  /// hint costs bits, not correctness. Same lifetime and count rules as above.
+  const SMacroblockMotion* pMacroblockMotion;
+  int       iMacroblockMotionCount;
 } SSourcePicture;
 
 /**
