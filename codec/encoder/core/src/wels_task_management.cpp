@@ -254,6 +254,16 @@ WelsErrorType  CWelsTaskManageBase::ExecuteTasks (const CWelsBaseTask::ETaskType
   return ExecuteTaskList (m_pcAllTaskList[iTaskType]);
 }
 
+// Each task still takes and returns a thread bitstream buffer and records its
+// error; only the pool's completion signal, which nobody waits for, is skipped.
+WelsErrorType  CWelsTaskManageBase::ExecuteTasksInCallerThread (const CWelsBaseTask::ETaskType iTaskType) {
+  TASKLIST_TYPE* pTargetTaskList = m_pcAllTaskList[iTaskType][m_iCurDid];
+  const int32_t kiTaskCount = m_iTaskNum[m_iCurDid];
+  for (int32_t iIdx = 0; iIdx < kiTaskCount; ++iIdx)
+    pTargetTaskList->getNode (iIdx)->Execute();
+  return ENC_RETURN_SUCCESS;
+}
+
 int32_t  CWelsTaskManageBase::GetThreadPoolThreadNum() {
   return m_pThreadPool->GetThreadNum();
 }

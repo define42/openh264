@@ -1832,7 +1832,18 @@ int32_t WelsMdInterMbLoop (sWelsEncCtx* pEncCtx, SSlice* pSlice, void* pWelsMd, 
     sDss.iStartPos = sDss.iCurrentPos = 0;
   }
   pSlice->iMbSkipRun = 0;
+  const bool kbUnchangedRuns = UnchangedRunsEnabled (pEncCtx);
+  uint32_t uiZeroSkipStamp = 0;
+  uint32_t* pZeroSkipStamps = UnchangedZeroSkipStamps (pEncCtx, &uiZeroSkipStamp);
   for (;;) {
+    if (kbUnchangedRuns) {
+      // Skips write no bits, so the run needs no dynamic slicing stash.
+      const int32_t kiRun = EncodeUnchangedRun (pEncCtx, pMd, pSlice, iNextMbIdx, kiTotalNumMb - iNumMbCoded,
+                            &iNextMbIdx);
+      iNumMbCoded += kiRun;
+      if (kiRun > 0 && (iNextMbIdx == -1 || iNextMbIdx >= kiTotalNumMb || iNumMbCoded >= kiTotalNumMb))
+        break;
+    }
     if (!pEncCtx->pSvcParam->iEntropyCodingModeFlag)
       pEncCtx->pFuncList->pfStashMBStatus (&sDss, pSlice, pSlice->iMbSkipRun);
     //point to current pMb
@@ -1890,6 +1901,8 @@ TRY_REENCODING:
     //step (7): reconstruct current MB
     pCurMb->uiSliceIdc = kiSliceIdx;
     OutputPMbWithoutConstructCsRsNoCopy (pEncCtx, pCurLayer, pSlice, pCurMb);
+    if (pZeroSkipStamps != NULL)
+      pZeroSkipStamps[iCurMbIdx] = (pCurMb->uiMbType == MB_TYPE_SKIP && LD32 (&pCurMb->sMv[0]) == 0) ? uiZeroSkipStamp : 0;
 
 #if defined(MB_TYPES_CHECK)
     WelsCountMbType (pEncCtx->sPerInfo.iMbCount, P_SLICE, pCurMb);

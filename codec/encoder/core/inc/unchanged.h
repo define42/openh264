@@ -39,6 +39,22 @@ bool TryUnchangedMacroblockEarly (TagWelsEncCtx* pCtx, TagWelsMD* pMd, TagSlice*
 // Inside inter mode decision, with the full median skip predictor.
 bool TryUnchangedMacroblock (TagWelsEncCtx* pCtx, TagWelsMD* pMd, TagSlice* pSlice, TagMB* pCurMb);
 
+// Where WelsMdInterMbLoop records each finished macroblock: *pStamp when it
+// is a zero-motion P_SKIP, else 0. NULL when this picture records nothing.
+uint32_t* UnchangedZeroSkipStamps (TagWelsEncCtx* pCtx, uint32_t* pStamp);
+// Whether WelsMdInterMbLoop may code runs of early-skipped macroblocks with
+// EncodeUnchangedRun; constant for the current picture.
+bool UnchangedRunsEnabled (TagWelsEncCtx* pCtx);
+// Codes the run of macroblocks from iMbIdx that TryUnchangedMacroblockEarly
+// would skip, at most iMaxCount, leaving the same macroblock, picture, slice
+// and cache state as the per-macroblock path. Returns the run length; when it
+// is positive, *pNextMbIdx receives the slice's next macroblock or -1.
+int32_t EncodeUnchangedRun (TagWelsEncCtx* pCtx, TagWelsMD* pMd, TagSlice* pSlice, int32_t iMbIdx,
+                            int32_t iMaxCount, int32_t* pNextMbIdx);
+// Whether this picture has so few changed macroblocks that its slices are
+// cheaper to code on the calling thread than to hand to the thread pool.
+bool UnchangedPreferCallerThread (TagWelsEncCtx* pCtx);
+
 }
 
 #endif // WELS_UNCHANGED_H__

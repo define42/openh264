@@ -39,6 +39,7 @@
  */
 
 #include "encoder.h"
+#include "unchanged.h"
 #include "cpu.h"
 #include "utils.h"
 #include "svc_enc_golomb.h"
@@ -3738,7 +3739,10 @@ int32_t WelsEncoderEncodeExt (sWelsEncCtx* pCtx, SFrameBSInfo* pFbi, const SSour
         pLayerBsInfo->eFrameType    = eFrameType;
         pLayerBsInfo->iSubSeqId = GetSubSequenceId (pCtx, eFrameType);
 
-        pCtx->pTaskManage->ExecuteTasks();
+        if (UnchangedPreferCallerThread (pCtx))
+          pCtx->pTaskManage->ExecuteTasksInCallerThread();
+        else
+          pCtx->pTaskManage->ExecuteTasks();
         if (pCtx->iEncoderError) {
           WelsLog (pLogCtx, WELS_LOG_ERROR,
                    "WelsEncoderEncodeExt(), multi-slice (mode %d) encoding error!",

@@ -17,6 +17,8 @@
 #include "mv_pred.h"
 #include "svc_base_layer_md.h"
 #include "svc_enc_slice_segment.h"
+#include "svc_encode_slice.h"
+#include "svc_mode_decision.h"
 
 namespace WelsEnc {
 
@@ -35,8 +37,8 @@ bool UnchangedConfiguration (const SWelsSvcCodingParam* pParam) {
 }
 
 void UnchangedFrameReset (sWelsEncCtx* pCtx) {
-  // bFinalZeroSkip is read only below iFinalZeroSkipCount; leave it as is.
-  memset (&pCtx->sUnchanged, 0, offsetof (SUnchangedFrameState, bFinalZeroSkip));
+  // The stamps are read only below iFinalZeroSkipCount; leave them as is.
+  memset (&pCtx->sUnchanged, 0, offsetof (SUnchangedFrameState, uiStampCounter));
 }
 
 static SReconstructedPictureVersion PictureVersion (SPicture* pPicture, uint64_t uiGeneration) {
@@ -81,15 +83,14 @@ static SPicture* ReusableSource (const SUnchangedFrameState* kpState) {
 
 static void CaptureFinalSkipMotion (SUnchangedFrameState* pState, const SDqLayer* kpLayer, bool bValidSource) {
   const int32_t kiCount = kpLayer->iMbWidth * kpLayer->iMbHeight;
-  if (!bValidSource || kiCount < 1 || kiCount > UNCHANGED_MAX_MB_COUNT) {
+  // Called after a successful frame, after every slice thread finished. A
+  // macroblock coded outside WelsMdInterMbLoop keeps an older stamp, which
+  // only forgoes reuse.
+  if (!bValidSource || pState->uiCodingStamp == 0 || kiCount < 1 || kiCount > UNCHANGED_MAX_MB_COUNT) {
     pState->iFinalZeroSkipCount = 0;
     return;
   }
-  // Called after a successful frame, after every slice thread finished.
-  for (int32_t i = 0; i < kiCount; ++i) {
-    const SMB* kpMb = &kpLayer->sMbDataP[i];
-    pState->bFinalZeroSkip[i] = kpMb->uiMbType == MB_TYPE_SKIP && kpMb->sMv[0].iMvX == 0 && kpMb->sMv[0].iMvY == 0;
-  }
+  pState->uiFinalStamp = pState->uiCodingStamp;
   pState->iFinalZeroSkipCount = kiCount;
 }
 
@@ -133,9 +134,17 @@ void UnchangedFrameBegin (sWelsEncCtx* pCtx, const SSourcePicture* pSrc) {
   SUnchangedFrameState* pState = &pCtx->sUnchanged;
   pState->pMacroblocks = NULL;
   pState->iMacroblockCount = 0;
+  pState->iChangedMacroblockCount = 0;
   pState->pReuseDestination = NULL;
+  pState->uiCodingStamp = 0;
   if (pSrc == NULL || !UnchangedConfiguration (pCtx->pSvcParam))
     return;
+  if (++pState->uiStampCounter == 0) {
+    memset (pState->uiZeroSkipStamp, 0, sizeof (pState->uiZeroSkipStamp));
+    pState->iFinalZeroSkipCount = 0;
+    pState->uiStampCounter = 1;
+  }
+  pState->uiCodingStamp = pState->uiStampCounter;
   const SWelsSvcCodingParam* kpParam = pCtx->pSvcParam;
   const bool kbMatchingGeometry = pSrc->iPicWidth == kpParam->iPicWidth && pSrc->iPicHeight == kpParam->iPicHeight &&
                                   pSrc->iPicWidth == kpParam->sDependencyLayers[0].iActualWidth &&
@@ -148,6 +157,10 @@ void UnchangedFrameBegin (sWelsEncCtx* pCtx, const SSourcePicture* pSrc) {
   if (kbValidPrevious && pSrc->pUnchangedMacroblocks != NULL && (int64_t)pSrc->iUnchangedMacroblockCount == kiCount) {
     pState->pMacroblocks = pSrc->pUnchangedMacroblocks;
     pState->iMacroblockCount = pSrc->iUnchangedMacroblockCount;
+    int32_t iChanged = 0;
+    for (int32_t i = 0; i < pState->iMacroblockCount; ++i)
+      iChanged += pState->pMacroblocks[i] == 0;
+    pState->iChangedMacroblockCount = iChanged;
     pState->pReuseDestination = ReusableSource (pState);
   }
 }
@@ -156,6 +169,7 @@ void UnchangedFrameFinish (sWelsEncCtx* pCtx, const SSourcePicture* pSrc, const 
   SUnchangedFrameState* pState = &pCtx->sUnchanged;
   pState->pMacroblocks = NULL;
   pState->iMacroblockCount = 0;
+  pState->iChangedMacroblockCount = 0;
   pState->pReuseDestination = NULL;
   if (!bSuccess || pSrc == NULL || pBsInfo == NULL || !UnchangedConfiguration (pCtx->pSvcParam)) {
     UnchangedFrameReset (pCtx);
@@ -235,7 +249,8 @@ static void EncodeUnchangedMacroblock (sWelsEncCtx* pCtx, SWelsMD* pMd, SSlice* 
   // from, its samples are already identical.
   const SUnchangedFrameState* kpState = &pCtx->sUnchanged;
   const bool kbResident = kpState->pReuseDestination != NULL && pLayer->pDecPic == kpState->pReuseDestination &&
-                          kiIndex < kpState->iFinalZeroSkipCount && kpState->bFinalZeroSkip[kiIndex];
+                          kiIndex < kpState->iFinalZeroSkipCount &&
+                          kpState->uiZeroSkipStamp[kiIndex] == kpState->uiFinalStamp;
   if (!kbResident) {
     CopyBlock (pMbCache->SPicData.pCsMb[0], pLayer->iCsStride[0], pMbCache->SPicData.pRefMb[0],
                pReference->iLineSize[0], 16);
@@ -264,6 +279,163 @@ bool TryUnchangedMacroblockEarly (sWelsEncCtx* pCtx, SWelsMD* pMd, SSlice* pSlic
   if (!UnchangedMacroblockEligible (pCtx, pCurMb) || !UnchangedSkipPredictorIsZero (pCurMb, pCtx->pCurDqLayer->iMbWidth))
     return false;
   EncodeUnchangedMacroblock (pCtx, pMd, pSlice, pCurMb);
+  return true;
+}
+
+// Not declared in a header; the run path requires fixed-QP rate control.
+void WelsRcMbInitDisable (sWelsEncCtx* pEncCtx, SMB* pCurMb, SSlice* pSlice);
+void WelsRcMbInfoUpdateDisable (sWelsEncCtx* pEncCtx, SMB* pCurMb, int32_t iCostLuma, SSlice* pSlice);
+
+// The picture-wide half of UnchangedMacroblockEligible, plus the per-macroblock
+// steps of WelsMdInterMbLoop the run path replaces with their known effects:
+// fixed-QP rate control (WelsRcMbInitDisable sets this QP), background update
+// without detection, and CAVLC, whose skips write no bits.
+uint32_t* UnchangedZeroSkipStamps (sWelsEncCtx* pCtx, uint32_t* pStamp) {
+  SUnchangedFrameState* pState = &pCtx->sUnchanged;
+  const SDqLayer* kpLayer = pCtx->pCurDqLayer;
+  *pStamp = pState->uiCodingStamp;
+  if (pState->uiCodingStamp == 0 || kpLayer->iMbWidth * kpLayer->iMbHeight > UNCHANGED_MAX_MB_COUNT)
+    return NULL;
+  return pState->uiZeroSkipStamp;
+}
+
+bool UnchangedRunsEnabled (sWelsEncCtx* pCtx) {
+  const SUnchangedFrameState* kpState = &pCtx->sUnchanged;
+  const SSliceCtx* kpSliceCtx = &pCtx->pCurDqLayer->sSliceEncCtx;
+  if (kpState->pMacroblocks == NULL || !UnchangedConfiguration (pCtx->pSvcParam) ||
+      (kpSliceCtx->uiSliceMode != SM_SINGLE_SLICE && kpSliceCtx->uiSliceMode != SM_FIXEDSLCNUM_SLICE))
+    return false;
+  const SWelsFuncPtrList* kpFunc = pCtx->pFuncList;
+  if (kpFunc->pfRc.pfWelsRcMbInit != WelsRcMbInitDisable ||
+      kpFunc->pfRc.pfWelsRcMbInfoUpdate != WelsRcMbInfoUpdateDisable ||
+      (kpFunc->pfMdBackgroundInfoUpdate != WelsMdUpdateBGDInfo &&
+       kpFunc->pfMdBackgroundInfoUpdate != WelsMdUpdateBGDInfoNULL) ||
+      pCtx->pSvcParam->iEntropyCodingModeFlag != 0 || pCtx->pSvcParam->bEnableAdaptiveQuant)
+    return false;
+  const SDqLayer* kpLayer = pCtx->pCurDqLayer;
+  const SPicture* kpReference = kpLayer->pRefPic;
+  const bool kbValidReference = pCtx->eSliceType == P_SLICE && pCtx->iNumRef0 == 1 &&
+                                kpReference != NULL && kpReference == kpState->pReference && kpReference == pCtx->pRefList0[0] &&
+                                kpReference->iFrameNum == kpState->iFrameNum && kpReference->iFramePoc == kpState->iPoc;
+  return kbValidReference && kpLayer->iLoopFilterDisableIdc == 1 && kpReference->iPictureType == P_SLICE &&
+         pCtx->pRefPic != NULL && WELS_CLIP3 (pCtx->iGlobalQp, 0, 51) == kpState->iQp &&
+         kpState->iMacroblockCount == kpLayer->iMbWidth * kpLayer->iMbHeight;
+}
+
+int32_t EncodeUnchangedRun (sWelsEncCtx* pCtx, SWelsMD* pMd, SSlice* pSlice, int32_t iMbIdx, int32_t iMaxCount,
+                            int32_t* pNextMbIdx) {
+  const SUnchangedFrameState* kpState = &pCtx->sUnchanged;
+  SDqLayer* pLayer = pCtx->pCurDqLayer;
+  SPicture* pReference = pLayer->pRefPic;
+  SPicture* pDecPic = pLayer->pDecPic;
+  SMB* pMbList = pLayer->sMbDataP;
+  const int32_t kiTotal = pLayer->iMbWidth * pLayer->iMbHeight;
+  const int32_t kiSliceIdx = pSlice->iSliceIdx;
+  // Skips take the slice's last QP (WelsMdInterUpdatePskip, WelsSpatialWriteMbSyn).
+  const uint8_t kuiLumaQp = pSlice->uiLastMbQp;
+  const uint8_t kuiChromaQp = g_kuiChromaQpTable[CLIP3_QP_0_51 (kuiLumaQp +
+                              pLayer->sLayerInfo.pPpsP->uiChromaQpIndexOffset)];
+  // WelsMdUpdateBGDInfo with zero CBP and zero motion keeps the reference QP
+  // unless the encoder's reference picture is intra.
+  const bool kbIntraReference = pCtx->pRefPic->iPictureType == I_SLICE;
+  const bool kbReuse = kpState->pReuseDestination != NULL && pDecPic == kpState->pReuseDestination &&
+                       iMbIdx >= 0 && kiTotal <= kpState->iFinalZeroSkipCount;
+  const uint32_t kuiFinalStamp = kpState->uiFinalStamp;
+  uint32_t* pStamps = pCtx->sUnchanged.uiCodingStamp != 0 ? pCtx->sUnchanged.uiZeroSkipStamp : NULL;
+  const uint32_t kuiCodingStamp = pCtx->sUnchanged.uiCodingStamp;
+  // WelsGetNextMbOfSlice, unrolled for the fixed slice modes.
+  const SSliceCtx* kpSliceCtx = &pLayer->sSliceEncCtx;
+  const bool kbSingleSlice = kpSliceCtx->uiSliceMode == SM_SINGLE_SLICE;
+  const uint16_t* kpMbMap = kpSliceCtx->pOverallMbMap;
+  const int32_t kiMbNum = kpSliceCtx->iMbNumInFrame;
+  const int32_t kiCsStrideY = pLayer->iCsStride[0], kiCsStrideUV = pLayer->iCsStride[1];
+  const int32_t kiRefStrideY = pReference->iLineSize[0], kiRefStrideUV = pReference->iLineSize[1];
+
+  int32_t iCount = 0, iLast = -1;
+  while (iCount < iMaxCount && iMbIdx >= 0 && iMbIdx < kiTotal) {
+    SMB* pMb = &pMbList[iMbIdx];
+    if (!kpState->pMacroblocks[iMbIdx] || pReference->uiRefMbType[iMbIdx] != MB_TYPE_SKIP ||
+        pReference->sMvList[iMbIdx].iMvX != 0 || pReference->sMvList[iMbIdx].iMvY != 0 ||
+        !UnchangedSkipPredictorIsZero (pMb, pLayer->iMbWidth))
+      break;
+    // EncodeUnchangedMacroblock
+    if (! (kbReuse && kpState->uiZeroSkipStamp[iMbIdx] == kuiFinalStamp)) {
+      const int32_t kiX = pMb->iMbX, kiY = pMb->iMbY;
+      CopyBlock (pLayer->pCsData[0] + ((kiX + kiY * kiCsStrideY) << 4), kiCsStrideY,
+                 pReference->pData[0] + ((kiX + kiY * kiRefStrideY) << 4), pReference->iLineSize[0], 16);
+      for (int32_t iPlane = 1; iPlane < 3; ++iPlane) {
+        CopyBlock (pLayer->pCsData[iPlane] + ((kiX + kiY * kiCsStrideUV) << 3), pLayer->iCsStride[iPlane],
+                   pReference->pData[iPlane] + ((kiX + kiY * kiRefStrideUV) << 3), pReference->iLineSize[iPlane], 8);
+      }
+    }
+    pMb->uiMbType = MB_TYPE_SKIP;
+    pMb->uiCbp = 0;
+    pMb->pRefIndex[0] = pMb->pRefIndex[1] = pMb->pRefIndex[2] = pMb->pRefIndex[3] = 0;
+    memset (pMb->sMv, 0, 16 * sizeof (SMVUnitXY));
+    pMb->sP16x16Mv.iMvX = pMb->sP16x16Mv.iMvY = 0;
+    pDecPic->sMvList[iMbIdx].iMvX = pDecPic->sMvList[iMbIdx].iMvY = 0;
+    memset (pMb->pNonZeroCount, 0, 24);
+    pMb->uiLumaQp = kuiLumaQp;
+    pMb->uiChromaQp = kuiChromaQp;
+    // WelsMdInterSaveSadAndRefMbType and WelsMdUpdateBGDInfo
+    pDecPic->pMbSkipSad[iMbIdx] = pReference->pMbSkipSad[iMbIdx];
+    pDecPic->uiRefMbType[iMbIdx] = MB_TYPE_SKIP;
+    pDecPic->pRefMbQp[iMbIdx] = kbIntraReference ? kuiLumaQp : pReference->pRefMbQp[iMbIdx];
+    // WelsSpatialWriteMbSyn and WelsMdInterMbLoop
+    ++pSlice->iMbSkipRun;
+    pMb->uiSliceIdc = kiSliceIdx;
+    if (pStamps != NULL)
+      pStamps[iMbIdx] = kuiCodingStamp;
+    ++iCount;
+    iLast = iMbIdx;
+    const int32_t kiNext = iMbIdx + 1;
+    if (kiNext >= kiMbNum || (!kbSingleSlice && (kpMbMap == NULL || kpMbMap[kiNext] != kpMbMap[iMbIdx])))
+      iMbIdx = -1;
+    else
+      iMbIdx = kiNext;
+  }
+  if (iCount == 0)
+    return 0;
+
+  // Leave the per-slice cache and mode decision state as the last skipped
+  // macroblock would have: later macroblocks advance its picture pointers.
+  const SMB* kpLast = &pMbList[iLast];
+  SMbCache* pMbCache = &pSlice->sMbCacheInfo;
+  const int32_t kiX = kpLast->iMbX, kiY = kpLast->iMbY;
+  for (int32_t iPlane = 0; iPlane < 3; ++iPlane) {
+    const int32_t kiShift = iPlane == 0 ? 4 : 3;
+    const int32_t kiStride = iPlane == 0 ? 0 : 1;
+    pMbCache->SPicData.pEncMb[iPlane] = pLayer->pEncData[iPlane] + ((kiX + kiY * pLayer->iEncStride[kiStride]) << kiShift);
+    pMbCache->SPicData.pCsMb[iPlane] = pLayer->pCsData[iPlane] + ((kiX + kiY * pLayer->iCsStride[kiStride]) << kiShift);
+    pMbCache->SPicData.pDecMb[iPlane] = pDecPic->pData[iPlane] + ((kiX + kiY * pDecPic->iLineSize[kiStride]) << kiShift);
+    pMbCache->SPicData.pRefMb[iPlane] = pReference->pData[iPlane] + ((kiX + kiY * pReference->iLineSize[kiStride]) <<
+                                        kiShift);
+  }
+  pMbCache->pEncSad = &pDecPic->pMbSkipSad[iLast];
+  pMbCache->uiRefMbType = pReference->uiRefMbType[iLast];
+  pMbCache->bCollocatedPredFlag = true;
+  UpdateNonZeroCountCache (const_cast<SMB*> (kpLast), pMbCache);
+  pMd->iCostLuma = *kpLast->pSadCost;
+  pMd->iCostSkipMb = pReference->pMbSkipSad[iLast];
+  *pNextMbIdx = iMbIdx;
+  return iCount;
+}
+
+bool UnchangedPreferCallerThread (sWelsEncCtx* pCtx) {
+  const SUnchangedFrameState* kpState = &pCtx->sUnchanged;
+  // Thread pool dispatch costs more than coding a few macroblocks outside
+  // unchanged runs. Only certified blocks over zero-motion skips can join one.
+  const int32_t kiLimit = kpState->iMacroblockCount / 32;
+  if (kpState->iChangedMacroblockCount > kiLimit || !UnchangedRunsEnabled (pCtx))
+    return false;
+  const SPicture* kpReference = pCtx->pCurDqLayer->pRefPic;
+  int32_t iFull = 0;
+  for (int32_t i = 0; i < kpState->iMacroblockCount; ++i) {
+    iFull += !kpState->pMacroblocks[i] || kpReference->uiRefMbType[i] != MB_TYPE_SKIP ||
+             kpReference->sMvList[i].iMvX != 0 || kpReference->sMvList[i].iMvY != 0;
+    if (iFull > kiLimit)
+      return false;
+  }
   return true;
 }
 

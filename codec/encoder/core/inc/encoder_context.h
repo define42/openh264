@@ -131,6 +131,7 @@ typedef struct TagReconstructedPictureVersion {
 typedef struct TagUnchangedFrameState {
   const unsigned char* pMacroblocks;
   int32_t   iMacroblockCount;
+  int32_t   iChangedMacroblockCount; // entries of pMacroblocks that are zero
   SPicture* pReference;
   int32_t   iFrameNum;
   int32_t   iPoc;
@@ -142,9 +143,17 @@ typedef struct TagUnchangedFrameState {
   SReconstructedPictureVersion sPictures[2];
   SReconstructedPictureVersion sSource;
   SPicture* pReuseDestination;
+  // Macroblocks coded as zero-motion P_SKIP carry the stamp of their picture
+  // in uiZeroSkipStamp, written as each one is finished; others get 0. Those
+  // of the last successful picture, below iFinalZeroSkipCount, match
+  // uiFinalStamp.
+  uint32_t  uiCodingStamp;
+  uint32_t  uiFinalStamp;
   int32_t   iFinalZeroSkipCount;
-  // Final coded zero-motion P_SKIPs of the last frame, not search heuristics.
-  bool      bFinalZeroSkip[UNCHANGED_MAX_MB_COUNT];
+
+  // Not reset: stamps must never repeat while uiZeroSkipStamp holds them.
+  uint32_t  uiStampCounter;
+  uint32_t  uiZeroSkipStamp[UNCHANGED_MAX_MB_COUNT];
 } SUnchangedFrameState;
 
 typedef struct TagWelsEncCtx {

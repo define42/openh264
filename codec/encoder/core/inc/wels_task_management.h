@@ -58,6 +58,12 @@ class IWelsTaskManage {
   virtual void            InitFrame (const int32_t kiCurDid) {}
   virtual WelsErrorType   ExecuteTasks (const CWelsBaseTask::ETaskType iTaskType = CWelsBaseTask::WELS_ENC_TASK_ENCODING)
     = 0;
+  // Runs the same tasks one after another on the calling thread, for work too
+  // small to repay the thread pool's dispatch.
+  virtual WelsErrorType   ExecuteTasksInCallerThread (const CWelsBaseTask::ETaskType iTaskType =
+        CWelsBaseTask::WELS_ENC_TASK_ENCODING) {
+    return ExecuteTasks (iTaskType);
+  }
 
   static IWelsTaskManage* CreateTaskManage (sWelsEncCtx* pCtx, const int32_t iSpatialLayer, const bool bNeedLock);
 
@@ -78,6 +84,8 @@ class  CWelsTaskManageBase : public IWelsTaskManage, public WelsCommon::IWelsTas
   virtual void           InitFrame (const int32_t kiCurDid = 0);
 
   virtual WelsErrorType  ExecuteTasks (const CWelsBaseTask::ETaskType iTaskType = CWelsBaseTask::WELS_ENC_TASK_ENCODING);
+  virtual WelsErrorType  ExecuteTasksInCallerThread (const CWelsBaseTask::ETaskType iTaskType =
+        CWelsBaseTask::WELS_ENC_TASK_ENCODING);
 
   //IWelsTaskSink
   virtual WelsErrorType OnTaskExecuted();
@@ -126,6 +134,10 @@ class  CWelsTaskManageOne : public CWelsTaskManageBase {
 
   WelsErrorType   Init (sWelsEncCtx* pEncCtx);
   virtual WelsErrorType  ExecuteTasks(const CWelsBaseTask::ETaskType iTaskType = CWelsBaseTask::WELS_ENC_TASK_ENCODING);
+  virtual WelsErrorType  ExecuteTasksInCallerThread (const CWelsBaseTask::ETaskType iTaskType =
+        CWelsBaseTask::WELS_ENC_TASK_ENCODING) {
+    return ExecuteTasks (iTaskType);
+  }
 
   int32_t  GetThreadPoolThreadNum() {return 1;};
 };
