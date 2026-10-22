@@ -97,6 +97,23 @@ endif
 
 MODULE := $(LIBPREFIX)$(MODULE_NAME).$(SHAREDLIBSUFFIX)
 
+# Link-time optimization (GCC and Clang only). Static archives then hold
+# LTO objects, so they need an archiver that understands them: gcc-ar for
+# GCC and llvm-ar for Clang, unless AR is given explicitly.
+ifeq ($(USE_LTO), Yes)
+CFLAGS += -flto
+LDFLAGS += -flto
+ifeq ($(origin AR), default)
+ifneq (,$(findstring clang,$(shell $(CC) --version 2>/dev/null)))
+ifeq (,$(filter darwin ios,$(OS)))
+AR = $(shell $(CC) -print-prog-name=llvm-ar)
+endif
+else
+AR = gcc-ar
+endif
+endif
+endif
+
 CFLAGS += -DGENERATED_VERSION_HEADER
 LDFLAGS +=
 
