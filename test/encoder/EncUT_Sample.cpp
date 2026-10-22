@@ -763,6 +763,30 @@ GENERATE_SadFour_UT (WelsSampleSadFour16x8_sse2, WELS_CPU_SSE2, 16, 8)
 GENERATE_SadFour_UT (WelsSampleSadFour16x16_sse2, WELS_CPU_SSE2, 16, 16)
 #endif
 
+// Checks each of the four SADs (and their order) against the C version
+#define GENERATE_SadFourExact_UT(func, ref, CPUFLAGS) \
+TEST_F (SadSatdAssemblyFuncTest, func##_exact) { \
+  if (0 == (m_uiCpuFeatureFlag & CPUFLAGS)) \
+    return; \
+  ENFORCE_STACK_ALIGN_1D (int32_t, iSadRef, 4, 16); \
+  for (int32_t iIter = 0; iIter < 16; iIter++) { \
+    for (int i = 0; i < (m_iStrideA << 5); i++) \
+      m_pPixSrcA[i] = (iIter & 1) ? ((rand() & 1) ? 255 : 0) : rand() % 256; \
+    for (int i = 0; i < (m_iStrideB << 5); i++) \
+      m_pPixSrcB[i] = (iIter & 1) ? ((rand() & 1) ? 255 : 0) : rand() % 256; \
+    const int32_t iOffset = m_iStrideB + 1 + iIter; \
+    ref (m_pPixSrcA, m_iStrideA, m_pPixSrcB + iOffset, m_iStrideB, iSadRef); \
+    func (m_pPixSrcA, m_iStrideA, m_pPixSrcB + iOffset, m_iStrideB, m_pSad); \
+    for (int i = 0; i < 4; i++) \
+      ASSERT_EQ (iSadRef[i], m_pSad[i]) << "index " << i; \
+  } \
+}
+
+#ifdef HAVE_AVX2
+GENERATE_SadFourExact_UT (WelsSampleSadFour16x8_avx2, WelsSampleSadFour16x8_c, WELS_CPU_AVX2)
+GENERATE_SadFourExact_UT (WelsSampleSadFour16x16_avx2, WelsSampleSadFour16x16_c, WELS_CPU_AVX2)
+#endif
+
 #ifdef HAVE_NEON
 GENERATE_SadFour_UT (WelsSampleSadFour4x4_neon, WELS_CPU_NEON, 4, 4)
 GENERATE_SadFour_UT (WelsSampleSadFour8x8_neon, WELS_CPU_NEON, 8, 8)

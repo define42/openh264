@@ -2765,3 +2765,87 @@ WELS_EXTERN WelsSampleSad4x4_sse2
     movd       retrd, xmm0
     LOAD_4_PARA_POP
     ret
+
+
+%ifdef HAVE_AVX2
+;***********************************************************************
+;
+;Pixel_sad_4_wxh_avx2 BEGIN
+;
+; Two rows of 16 pixels are processed per ymm register; the reference rows used for the
+; pRef + iRefStride SAD of one row pair are reused for the pRef - iRefStride SAD of the next.
+; (Single SADs are not faster than the SSE2 versions with this layout, so there are none.)
+;
+;***********************************************************************
+
+; %1: ymm register name without the leading x/y (e.g. mm1), %2: address of row 0, %3: address of row 1
+%macro AVX2_Load2x16 3
+    vmovdqu      x%1, [%2]
+    vinserti128  y%1, y%1, [%3], 1
+%endmacro
+
+; void WelsSampleSadFour16x16_avx2 / WelsSampleSadFour16x8_avx2 (uint8_t* pSrc, int32_t iSrcStride,
+;     uint8_t* pRef, int32_t iRefStride, int32_t* pSad)
+; pSad[0..3] = SAD against pRef - iRefStride, pRef + iRefStride, pRef - 1, pRef + 1
+%macro AVX2_SampleSadFour16xN 1
+    %assign push_num 0
+    LOAD_5_PARA
+    PUSH_XMM 8
+    SIGN_EXTENSION r1, r1d
+    SIGN_EXTENSION r3, r3d
+    sub          r2, r3
+    vmovdqu      xmm3, [r2]
+    add          r2, r3
+    vinserti128  ymm3, ymm3, [r2], 1    ; ref rows -1 and 0
+    vpxor        ymm4, ymm4, ymm4       ; sad pRef - iRefStride
+    vpxor        ymm5, ymm5, ymm5       ; sad pRef + iRefStride
+    vpxor        ymm6, ymm6, ymm6       ; sad pRef - 1
+    vpxor        ymm7, ymm7, ymm7       ; sad pRef + 1
+%rep %1 / 2
+    ; r0 -> src row i, r2 -> ref row i, ymm3 = ref rows i - 1 and i
+    AVX2_Load2x16 mm0, r0, r0 + r1
+    vpsadbw      ymm1, ymm3, ymm0
+    vpaddd       ymm4, ymm4, ymm1
+    AVX2_Load2x16 mm3, r2 + r3, r2 + 2 * r3
+    vpsadbw      ymm1, ymm3, ymm0
+    vpaddd       ymm5, ymm5, ymm1
+    AVX2_Load2x16 mm1, r2 - 1, r2 + r3 - 1
+    vpsadbw      ymm1, ymm1, ymm0
+    vpaddd       ymm6, ymm6, ymm1
+    AVX2_Load2x16 mm2, r2 + 1, r2 + r3 + 1
+    vpsadbw      ymm2, ymm2, ymm0
+    vpaddd       ymm7, ymm7, ymm2
+    lea          r0, [r0 + 2 * r1]
+    lea          r2, [r2 + 2 * r3]
+%endrep
+    ; each accumulator holds one partial sum per qword
+    vpunpcklqdq  ymm0, ymm4, ymm5
+    vpunpckhqdq  ymm1, ymm4, ymm5
+    vpaddd       ymm0, ymm0, ymm1       ; dwords 0, 2: up, down
+    vpunpcklqdq  ymm2, ymm6, ymm7
+    vpunpckhqdq  ymm1, ymm6, ymm7
+    vpaddd       ymm2, ymm2, ymm1       ; dwords 0, 2: left, right
+    vpslldq      ymm2, ymm2, 4
+    vpor         ymm0, ymm0, ymm2       ; up, left, down, right
+    vextracti128 xmm1, ymm0, 1
+    vpaddd       xmm0, xmm0, xmm1
+    vpshufd      xmm0, xmm0, 0xd8       ; up, down, left, right
+    vmovdqu      [r4], xmm0
+    vzeroupper
+    POP_XMM
+    LOAD_5_PARA_POP
+    ret
+%endmacro
+
+WELS_EXTERN WelsSampleSadFour16x16_avx2
+    AVX2_SampleSadFour16xN 16
+
+WELS_EXTERN WelsSampleSadFour16x8_avx2
+    AVX2_SampleSadFour16xN 8
+
+;***********************************************************************
+;
+;Pixel_sad_4_wxh_avx2 END
+;
+;***********************************************************************
+%endif ; HAVE_AVX2
