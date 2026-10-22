@@ -62,6 +62,7 @@ extern "C" {
 #if defined (X86_ASM)
 
 int32_t WelsSampleSad4x4_mmx (uint8_t*, int32_t, uint8_t*, int32_t);
+int32_t WelsSampleSad4x4_sse2 (uint8_t*, int32_t, uint8_t*, int32_t);
 int32_t WelsSampleSad16x16_sse2 (uint8_t*, int32_t, uint8_t*, int32_t);
 int32_t WelsSampleSad16x8_sse2 (uint8_t*, int32_t, uint8_t*, int32_t);
 int32_t WelsSampleSad8x16_sse2 (uint8_t*, int32_t, uint8_t*, int32_t);

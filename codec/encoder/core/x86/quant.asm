@@ -286,6 +286,85 @@ WELS_EXTERN WelsHadamardQuant2x2Skip_mmx
     ret
 
 
+;***********************************************************************
+; SSE2 versions of the two functions above; the coefficients occupy the low
+; four words, and the upper words are cleared before counting nonzeros.
+;***********************************************************************
+%macro SSE2_HDM2x2_QUANT 0
+    movd        xmm0,           [r0]
+    movd        xmm1,           [r0 + 0x20]
+    punpcklwd   xmm0,           xmm1
+    movd        xmm3,           [r0 + 0x40]
+    movd        xmm1,           [r0 + 0x60]
+    punpcklwd   xmm3,           xmm1
+
+    ;hdm_2x2,   xmm0 = dct0 dct1, xmm3 = dct2 dct3
+    movdqa      xmm5,           xmm3
+    paddw       xmm3,           xmm0
+    psubw       xmm0,           xmm5
+    punpcklwd   xmm3,           xmm0
+    movdqa      xmm1,           xmm3
+    psrlq       xmm1,           32
+    movdqa      xmm5,           xmm1
+    paddw       xmm1,           xmm3
+    psubw       xmm3,           xmm5
+    punpcklwd   xmm1,           xmm3
+
+    ;quant_2x2_dc
+    MMX_Copy4Times  xmm3,       r2d
+    MMX_Copy4Times  xmm2,       r1d
+    MMX_Quant4      xmm1,   xmm0,   xmm2,   xmm3
+    movq        xmm1,           xmm1
+%endmacro
+
+%macro SSE2_COUNT_NONZERO_2x2 0
+    pcmpeqb     xmm2,           xmm2
+    pxor        xmm3,           xmm3
+    packsswb    xmm1,           xmm3
+    pcmpeqb     xmm1,           xmm3
+    psubsb      xmm1,           xmm2
+    psadbw      xmm1,           xmm3
+%endmacro
+
+;***********************************************************************
+;int32_t WelsHadamardQuant2x2_sse2(int16_t *rs, const int16_t ff, int16_t mf, int16_t * pDct, int16_t * block);
+;***********************************************************************
+WELS_EXTERN WelsHadamardQuant2x2_sse2
+    %assign push_num 0
+    LOAD_5_PARA
+    SIGN_EXTENSIONW r1, r1w
+    SIGN_EXTENSIONW r2, r2w
+    SSE2_HDM2x2_QUANT
+
+    ; store dct_2x2
+    movq        [r3],           xmm1
+    movq        [r4],           xmm1
+
+    SSE2_COUNT_NONZERO_2x2
+    mov         r1w,                0
+    mov         [r0],           r1w
+    mov         [r0 + 0x20],    r1w
+    mov         [r0 + 0x40],    r1w
+    mov         [r0 + 0x60],    r1w
+
+    movd        retrd,      xmm1
+    LOAD_5_PARA_POP
+    ret
+
+;***********************************************************************
+;int32_t WelsHadamardQuant2x2Skip_sse2(int16_t *pDct, int16_t ff,  int16_t mf);
+;***********************************************************************
+WELS_EXTERN WelsHadamardQuant2x2Skip_sse2
+    %assign push_num 0
+    LOAD_3_PARA
+    SIGN_EXTENSIONW r1, r1w
+    SIGN_EXTENSIONW r2, r2w
+    SSE2_HDM2x2_QUANT
+    SSE2_COUNT_NONZERO_2x2
+    movd        retrd,          xmm1
+    ret
+
+
 %macro SSE2_DeQuant8 3
     MOVDQ  %2, %1
     pmullw %2, %3

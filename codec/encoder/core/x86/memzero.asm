@@ -81,6 +81,55 @@ WELS_EXTERN WelsSetMemZeroAligned64_sse2
     ret
 
 ;***********************************************************************
+;   void WelsSetMemZeroSize64_sse2(void *dst, int32_t size)
+;   size is a positive multiple of 64; dst needs no alignment.
+;***********************************************************************
+WELS_EXTERN WelsSetMemZeroSize64_sse2
+
+    %assign  push_num 0
+    LOAD_2_PARA
+    SIGN_EXTENSION r1, r1d
+    neg     r1
+
+    pxor    xmm0,       xmm0
+.memzero64_sse2_loops:
+    movdqu  [r0],       xmm0
+    movdqu  [r0+16],    xmm0
+    movdqu  [r0+32],    xmm0
+    movdqu  [r0+48],    xmm0
+    add     r0, 0x40
+
+    add r1, 0x40
+    jnz near .memzero64_sse2_loops
+
+    ret
+
+;***********************************************************************
+;   void WelsSetMemZeroSize8_sse2(void *dst, int32_t size)
+;   size is a positive multiple of 8; dst needs no alignment.
+;***********************************************************************
+WELS_EXTERN WelsSetMemZeroSize8_sse2
+
+    %assign  push_num 0
+    LOAD_2_PARA
+    SIGN_EXTENSION r1, r1d
+    neg     r1
+    pxor    xmm0,       xmm0
+
+.memzero16_sse2_loops:
+    cmp     r1,     -16
+    jg      .memzero8_sse2_tail
+    movdqu  [r0],       xmm0
+    add     r0,     0x10
+    add     r1,     0x10
+    jnz near .memzero16_sse2_loops
+    ret
+
+.memzero8_sse2_tail:
+    movq    [r0],       xmm0
+    ret
+
+;***********************************************************************
 ;   void WelsSetMemZeroSize64_mmx(void *dst, int32_t size)
 ;***********************************************************************
 WELS_EXTERN WelsSetMemZeroSize64_mmx

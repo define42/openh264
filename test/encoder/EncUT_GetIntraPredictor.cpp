@@ -2,6 +2,7 @@
 #include <stdlib.h>
 
 #include "get_intra_predictor.h"
+#include "cpu.h"
 #include "ls_defines.h"
 #include "macros.h"
 
@@ -554,3 +555,47 @@ TEST (GetIntraPredictorTest, TestGetI16x16LumaPredDcTop) {
   delete []pRef;
   delete []pPred;
 }
+
+#ifdef X86_ASM
+// SIMD 4x4 and chroma predictors against the C versions on random borders.
+typedef void (*PIntraPredFunc) (uint8_t* pPred, uint8_t* pRef, const int32_t kiStride);
+
+static void TestIntraPredAgainstC (PIntraPredFunc pfAsm, PIntraPredFunc pfC, int32_t iPredSize) {
+  const int32_t kiStride = 48;
+  for (int32_t iTest = 0; iTest < 2000; iTest++) {
+    ENFORCE_STACK_ALIGN_1D (uint8_t, pRefBuf, kiStride * 32, 16);
+    ENFORCE_STACK_ALIGN_1D (uint8_t, pPredC, 64, 16);
+    ENFORCE_STACK_ALIGN_1D (uint8_t, pPredAsm, 64, 16);
+    for (int32_t i = 0; i < kiStride * 32; i++)
+      pRefBuf[i] = (iTest & 1) ? (uint8_t) (rand() & 255) : (uint8_t) (rand() & 1 ? 255 : 0);
+    uint8_t* pRef = pRefBuf + kiStride * 12 + 16;
+    memset (pPredC, 0x5a, 64);
+    memset (pPredAsm, 0x5a, 64);
+    pfC (pPredC, pRef, kiStride);
+    pfAsm (pPredAsm, pRef, kiStride);
+    for (int32_t i = 0; i < iPredSize; i++)
+      ASSERT_EQ (pPredC[i], pPredAsm[i]) << "byte " << i << " test " << iTest;
+  }
+}
+
+#define GENERATE_INTRA_PRED_UT(asm_func, c_func, size, cpu) \
+TEST (GetIntraPredictorTest, asm_func) { \
+  if (WelsCPUFeatureDetect (0) & (cpu)) \
+    TestIntraPredAgainstC (asm_func, c_func, size); \
+}
+
+GENERATE_INTRA_PRED_UT (WelsI4x4LumaPredDDR_mmx, WelsI4x4LumaPredDDR_c, 16, WELS_CPU_MMXEXT)
+GENERATE_INTRA_PRED_UT (WelsI4x4LumaPredHD_mmx, WelsI4x4LumaPredHD_c, 16, WELS_CPU_MMXEXT)
+GENERATE_INTRA_PRED_UT (WelsI4x4LumaPredHU_mmx, WelsI4x4LumaPredHU_c, 16, WELS_CPU_MMXEXT)
+GENERATE_INTRA_PRED_UT (WelsI4x4LumaPredVR_mmx, WelsI4x4LumaPredVR_c, 16, WELS_CPU_MMXEXT)
+GENERATE_INTRA_PRED_UT (WelsI4x4LumaPredDDL_mmx, WelsI4x4LumaPredDDL_c, 16, WELS_CPU_MMXEXT)
+GENERATE_INTRA_PRED_UT (WelsI4x4LumaPredVL_mmx, WelsI4x4LumaPredVL_c, 16, WELS_CPU_MMXEXT)
+GENERATE_INTRA_PRED_UT (WelsIChromaPredH_mmx, WelsIChromaPredH_c, 64, WELS_CPU_MMXEXT)
+GENERATE_INTRA_PRED_UT (WelsI4x4LumaPredDDR_sse2, WelsI4x4LumaPredDDR_c, 16, WELS_CPU_SSE2)
+GENERATE_INTRA_PRED_UT (WelsI4x4LumaPredHD_sse2, WelsI4x4LumaPredHD_c, 16, WELS_CPU_SSE2)
+GENERATE_INTRA_PRED_UT (WelsI4x4LumaPredHU_sse2, WelsI4x4LumaPredHU_c, 16, WELS_CPU_SSE2)
+GENERATE_INTRA_PRED_UT (WelsI4x4LumaPredVR_sse2, WelsI4x4LumaPredVR_c, 16, WELS_CPU_SSE2)
+GENERATE_INTRA_PRED_UT (WelsI4x4LumaPredDDL_sse2, WelsI4x4LumaPredDDL_c, 16, WELS_CPU_SSE2)
+GENERATE_INTRA_PRED_UT (WelsI4x4LumaPredVL_sse2, WelsI4x4LumaPredVL_c, 16, WELS_CPU_SSE2)
+GENERATE_INTRA_PRED_UT (WelsIChromaPredH_sse2, WelsIChromaPredH_c, 64, WELS_CPU_SSE2)
+#endif

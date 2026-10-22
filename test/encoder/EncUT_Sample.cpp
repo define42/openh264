@@ -623,6 +623,7 @@ TEST_F (SadSatdAssemblyFuncTest, func) { \
 
 #ifdef X86_ASM
 GENERATE_Sad4x4_UT (WelsSampleSad4x4_mmx, WelsSampleSad4x4_c, WELS_CPU_MMXEXT)
+GENERATE_Sad4x4_UT (WelsSampleSad4x4_sse2, WelsSampleSad4x4_c, WELS_CPU_SSE2)
 GENERATE_Sad8x8_UT (WelsSampleSad8x8_sse21, WelsSampleSad8x8_c, WELS_CPU_SSE2)
 GENERATE_Sad8x16_UT (WelsSampleSad8x16_sse2, WelsSampleSad8x16_c, WELS_CPU_SSE2)
 GENERATE_Sad16x8_UT (WelsSampleSad16x8_sse2, WelsSampleSad16x8_c, WELS_CPU_SSE2)

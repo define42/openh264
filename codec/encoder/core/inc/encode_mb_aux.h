@@ -101,6 +101,8 @@ void WelsDctFourT4_avx2 (int16_t* pDct, uint8_t* pPixel1, int32_t iStride1, uint
 int32_t WelsHadamardQuant2x2_mmx (int16_t* pRes, const int16_t kiFF, int16_t iMF, int16_t* pDct, int16_t* pBlock);
 void WelsHadamardT4Dc_sse2 (int16_t* pLumaDc, int16_t* pDct);
 int32_t WelsHadamardQuant2x2Skip_mmx (int16_t* pRes, int16_t iFF,  int16_t iMF);
+int32_t WelsHadamardQuant2x2_sse2 (int16_t* pRes, const int16_t kiFF, int16_t iMF, int16_t* pDct, int16_t* pBlock);
+int32_t WelsHadamardQuant2x2Skip_sse2 (int16_t* pRes, int16_t iFF,  int16_t iMF);
 
 void WelsQuant4x4_sse2 (int16_t* pDct, const int16_t* pFF, const int16_t* pMF);
 void WelsQuant4x4Dc_sse2 (int16_t* pDct, int16_t iFF, int16_t iMF);

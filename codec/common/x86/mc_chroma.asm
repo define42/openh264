@@ -231,6 +231,72 @@ WELS_EXTERN McChromaWidthEq8_sse2
 
 
 
+;*******************************************************************************
+; void McChromaWidthEq4_ssse3( const uint8_t *pSrc,
+;                       int32_t iSrcStride,
+;                       uint8_t *pDst,
+;                       int32_t iDstStride,
+;                       const uint8_t *pABCD,
+;                       int32_t iHeight );
+; Two rows per iteration; iHeight must be even. Reads the same bytes as
+; McChromaWidthEq4_mmx: five per row.
+;*******************************************************************************
+WELS_EXTERN McChromaWidthEq4_ssse3
+    %assign  push_num 0
+    LOAD_6_PARA
+    PUSH_XMM 7
+    SIGN_EXTENSION  r1, r1d
+    SIGN_EXTENSION  r3, r3d
+    SIGN_EXTENSION  r5, r5d
+
+    movd      xmm4, [r4]                 ; A B C D
+    punpcklwd xmm4, xmm4                 ; AB AB CD CD
+    pshufd    xmm5, xmm4, 055h           ; CD in every byte pair
+    pshufd    xmm4, xmm4, 0              ; AB in every byte pair
+%ifdef X86_32_PICASM
+    pcmpeqw   xmm3, xmm3
+    psrlw     xmm3, 15
+    psllw     xmm3, 5
+%else
+    movdqa    xmm3, [h264_d0x20_sse2]
+%endif
+
+    movd      xmm0, [r0]
+    movd      xmm6, [r0+1]
+    punpcklbw xmm0, xmm6                 ; row 0: s0 s1 s1 s2 s2 s3 s3 s4
+
+.hloop_chroma:
+    movd      xmm1, [r0+r1]
+    movd      xmm6, [r0+r1+1]
+    punpcklbw xmm1, xmm6                 ; row 1
+    lea       r0, [r0+2*r1]
+    movd      xmm2, [r0]
+    movd      xmm6, [r0+1]
+    punpcklbw xmm2, xmm6                 ; row 2
+
+    punpcklqdq xmm0, xmm1                ; rows 0 and 1
+    movdqa    xmm6, xmm1
+    punpcklqdq xmm6, xmm2                ; rows 1 and 2
+    pmaddubsw xmm0, xmm4
+    pmaddubsw xmm6, xmm5
+    paddw     xmm0, xmm6
+    paddw     xmm0, xmm3
+    psrlw     xmm0, 6
+    packuswb  xmm0, xmm0
+    movd      [r2], xmm0
+    psrlq     xmm0, 32
+    movd      [r2+r3], xmm0
+
+    movdqa    xmm0, xmm2
+    lea       r2, [r2+2*r3]
+    sub       r5, 2
+    jnz       .hloop_chroma
+
+    POP_XMM
+    LOAD_6_PARA_POP
+    ret
+
+
 ;***********************************************************************
 ; void McChromaWidthEq8_ssse3( const uint8_t *pSrc,
 ;                        int32_t iSrcStride,

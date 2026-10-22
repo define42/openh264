@@ -2732,3 +2732,36 @@ WELS_EXTERN WelsSampleSad4x4_mmx
     WELSEMMS
     LOAD_4_PARA_POP
     ret
+
+;***********************************************************************
+;   int32_t WelsSampleSad4x4_sse2 (uint8_t *, int32_t, uint8_t *, int32_t )
+;***********************************************************************
+WELS_EXTERN WelsSampleSad4x4_sse2
+    %assign  push_num 0
+    LOAD_4_PARA
+    SIGN_EXTENSION r1, r1d
+    SIGN_EXTENSION r3, r3d
+    movd       xmm0, [r0]
+    movd       xmm1, [r0+r1]
+    lea        r0, [r0+2*r1]
+    punpckldq  xmm0, xmm1
+    movd       xmm1, [r0]
+    movd       xmm2, [r0+r1]
+    punpckldq  xmm1, xmm2
+    punpcklqdq xmm0, xmm1
+
+    movd       xmm1, [r2]
+    movd       xmm2, [r2+r3]
+    lea        r2, [r2+2*r3]
+    punpckldq  xmm1, xmm2
+    movd       xmm2, [r2]
+    movd       xmm3, [r2+r3]
+    punpckldq  xmm2, xmm3
+    punpcklqdq xmm1, xmm2
+
+    psadbw     xmm0, xmm1
+    movhlps    xmm1, xmm0
+    paddw      xmm0, xmm1
+    movd       retrd, xmm0
+    LOAD_4_PARA_POP
+    ret

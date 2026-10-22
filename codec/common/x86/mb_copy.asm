@@ -354,6 +354,70 @@ WELS_EXTERN WelsCopy8x8_mmx
     pop r4
     ret
 
+;***********************************************************************
+; void WelsCopy8x8_sse2(  uint8_t* Dst,
+;                         int32_t  iStrideD,
+;                         uint8_t* Src,
+;                         int32_t  iStrideS )
+;***********************************************************************
+WELS_EXTERN WelsCopy8x8_sse2
+    push r4
+    push r5
+    %assign  push_num 2
+    LOAD_4_PARA
+    SIGN_EXTENSION r1, r1d
+    SIGN_EXTENSION r3, r3d
+    lea r4, [r3+2*r3]
+    lea r5, [r1+2*r1]
+%rep 2
+    movq xmm0, [r2]
+    movq xmm1, [r2+r3]
+    movq xmm2, [r2+2*r3]
+    movq xmm3, [r2+r4]
+    lea r2, [r2+4*r3]
+    movq [r0], xmm0
+    movq [r0+r1], xmm1
+    movq [r0+2*r1], xmm2
+    movq [r0+r5], xmm3
+    lea r0, [r0+4*r1]
+%endrep
+    LOAD_4_PARA_POP
+    pop r5
+    pop r4
+    ret
+
+;***********************************************************************
+; void WelsCopy8x16_sse2( uint8_t* Dst,
+;                         int32_t  iStrideD,
+;                         uint8_t* Src,
+;                         int32_t  iStrideS )
+;***********************************************************************
+WELS_EXTERN WelsCopy8x16_sse2
+    push r4
+    push r5
+    %assign  push_num 2
+    LOAD_4_PARA
+    SIGN_EXTENSION r1, r1d
+    SIGN_EXTENSION r3, r3d
+    lea r4, [r3+2*r3]
+    lea r5, [r1+2*r1]
+%rep 4
+    movq xmm0, [r2]
+    movq xmm1, [r2+r3]
+    movq xmm2, [r2+2*r3]
+    movq xmm3, [r2+r4]
+    lea r2, [r2+4*r3]
+    movq [r0], xmm0
+    movq [r0+r1], xmm1
+    movq [r0+2*r1], xmm2
+    movq [r0+r5], xmm3
+    lea r0, [r0+4*r1]
+%endrep
+    LOAD_4_PARA_POP
+    pop r5
+    pop r4
+    ret
+
 ; (dunhuang@cisco), 12/21/2011
 ;***********************************************************************
 ; void UpdateMbMv_sse2( SMVUnitXY *pMvBuffer, const SMVUnitXY sMv )
@@ -455,6 +519,73 @@ ALIGN 4
 
 
 ;*******************************************************************************
+; void PixelAvgWidthEq4_sse2( uint8_t *pDst,  int iDstStride,
+;                            uint8_t *pSrcA, int iSrcAStride,
+;                            uint8_t *pSrcB, int iSrcBStride,
+;                            int iHeight );
+;*******************************************************************************
+WELS_EXTERN PixelAvgWidthEq4_sse2
+    %assign  push_num 0
+    LOAD_7_PARA
+    SIGN_EXTENSION  r1, r1d
+    SIGN_EXTENSION  r3, r3d
+    SIGN_EXTENSION  r5, r5d
+    SIGN_EXTENSION  r6, r6d
+
+ALIGN 4
+.height_loop:
+    movd        xmm0, [r4]
+    movd        xmm1, [r2]
+    pavgb       xmm0, xmm1
+    movd        [r0], xmm0
+
+    dec         r6
+    lea         r0, [r0+r1]
+    lea         r2, [r2+r3]
+    lea         r4, [r4+r5]
+    jne         .height_loop
+
+    LOAD_7_PARA_POP
+    ret
+
+
+;*******************************************************************************
+; void PixelAvgWidthEq8_sse2( uint8_t *pDst,  int iDstStride,
+;                            uint8_t *pSrcA, int iSrcAStride,
+;                            uint8_t *pSrcB, int iSrcBStride,
+;                            int iHeight );
+;*******************************************************************************
+WELS_EXTERN PixelAvgWidthEq8_sse2
+    %assign  push_num 0
+    LOAD_7_PARA
+    SIGN_EXTENSION  r1, r1d
+    SIGN_EXTENSION  r3, r3d
+    SIGN_EXTENSION  r5, r5d
+    SIGN_EXTENSION  r6, r6d
+
+ALIGN 4
+.height_loop:
+    movq        xmm0, [r2]
+    movhps      xmm0, [r2+r3]
+    movq        xmm1, [r4]
+    movhps      xmm1, [r4+r5]
+    pavgb       xmm0, xmm1
+    movq        [r0], xmm0
+    movhps      [r0+r1], xmm0
+
+    lea         r2,  [r2+2*r3]
+    lea         r4,  [r4+2*r5]
+    lea         r0,  [r0+2*r1]
+
+    sub         r6, 2
+    jnz         .height_loop
+
+    LOAD_7_PARA_POP
+    ret
+
+
+
+;*******************************************************************************
 ; void PixelAvgWidthEq16_sse2( uint8_t *pDst,  int iDstStride,
 ;                          uint8_t *pSrcA, int iSrcAStride,
 ;                          uint8_t *pSrcB, int iSrcBStride,
@@ -546,6 +677,33 @@ WELS_EXTERN McCopyWidthEq8_mmx
     CopyStrided4N   movq, movq, r2, r3, r0, r1, r4, r5, r6, mm0, mm1
 
     WELSEMMS
+    LOAD_5_PARA_POP
+%ifdef X86_32
+    pop             r6
+    pop             r5
+%endif
+    ret
+
+
+;*******************************************************************************
+;   void McCopyWidthEq8_sse2( uint8_t *pSrc, int iSrcStride,
+;                             uint8_t *pDst, int iDstStride, int iHeight )
+;*******************************************************************************
+WELS_EXTERN McCopyWidthEq8_sse2
+    %assign  push_num 0
+%ifdef X86_32
+    push            r5
+    push            r6
+    %assign  push_num 2
+%endif
+    LOAD_5_PARA
+
+    SIGN_EXTENSION  r1, r1d
+    SIGN_EXTENSION  r3, r3d
+    SIGN_EXTENSION  r4, r4d
+
+    CopyStrided4N   movq, movq, r2, r3, r0, r1, r4, r5, r6, xmm0, xmm1
+
     LOAD_5_PARA_POP
 %ifdef X86_32
     pop             r6

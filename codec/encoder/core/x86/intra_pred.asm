@@ -976,6 +976,336 @@ WELS_EXTERN WelsI4x4LumaPredVL_mmx
     ret
 
 ;***********************************************************************
+;   SSE2 versions of the MMX 4x4 and chroma H predictors above. Each one keeps
+;   the MMX value in the low qword of an xmm register: per-qword shifts and
+;   bytewise ops match, MMX high unpacks become low unpacks of the low qwords
+;   shifted down by 8 bytes, and memory operands are loaded with movd/movq.
+;***********************************************************************
+
+;   void WelsI4x4LumaPredDDR_sse2(uint8_t *pred,uint8_t *pRef,int32_t stride)
+WELS_EXTERN WelsI4x4LumaPredDDR_sse2
+    %assign push_num 0
+    INIT_X86_32_PIC r3
+    LOAD_3_PARA
+    SIGN_EXTENSION r2, r2d
+    movq        xmm1,[r1+r2-8]
+    movq        xmm2,[r1-8]
+    sub         r1, r2
+    movq        xmm0,[r1-8]
+    punpcklbw   xmm2,xmm0
+    psrldq      xmm2,8              ;MMX punpckhbw mm2,[r1-8]
+    movd        xmm3,[r1]
+    punpcklwd   xmm1,xmm2
+    psrldq      xmm1,8              ;MMX punpckhwd mm1,mm2
+    psllq       xmm3,18h
+    psrlq       xmm1,28h
+    por         xmm3,xmm1
+    movdqa      xmm1,xmm3
+    lea         r1,[r1+r2*2-8h]
+    movq        xmm4,[r1+r2]
+    psllq       xmm3,8
+    psrlq       xmm4,38h
+    por         xmm3,xmm4
+    movdqa      xmm2,xmm3
+    movq        xmm4,[r1+r2*2]
+    psllq       xmm3,8
+    psrlq       xmm4,38h
+    por         xmm3,xmm4
+    movdqa      xmm4,xmm3
+    pavgb       xmm3,xmm1
+    pxor        xmm1,xmm4
+    pand        xmm1,[pic(mmx_01bytes)]
+    psubusb     xmm3,xmm1
+    pavgb       xmm2,xmm3
+
+    movd        [r0+12],xmm2
+    psrlq       xmm2,8
+    movd        [r0+8],xmm2
+    psrlq       xmm2,8
+    movd        [r0+4],xmm2
+    psrlq       xmm2,8
+    movd        [r0],xmm2
+    DEINIT_X86_32_PIC
+    ret
+
+;   void WelsIChromaPredH_sse2(uint8_t *pred, uint8_t *pRef, int32_t stride)
+%macro SSE2_PRED_H_8X8_ONE_LINE 2
+    movq        xmm0,   %1
+    psrlq       xmm0,   38h
+    pmullw      xmm0,   [pic(mmx_01bytes)]
+    pshuflw     xmm0,   xmm0, 0
+    movq        [%2],   xmm0
+%endmacro
+
+WELS_EXTERN WelsIChromaPredH_sse2
+    %assign push_num 0
+    INIT_X86_32_PIC r3
+    LOAD_3_PARA
+    SIGN_EXTENSION r2, r2d
+    SSE2_PRED_H_8X8_ONE_LINE [r1-8], r0
+    SSE2_PRED_H_8X8_ONE_LINE [r1+r2-8], r0+8
+    lea         r1,[r1+r2*2]
+    SSE2_PRED_H_8X8_ONE_LINE [r1-8], r0+16
+    SSE2_PRED_H_8X8_ONE_LINE [r1+r2-8], r0+24
+    lea         r1,[r1+r2*2]
+    SSE2_PRED_H_8X8_ONE_LINE [r1-8], r0+32
+    SSE2_PRED_H_8X8_ONE_LINE [r1+r2-8], r0+40
+    lea         r1,[r1+r2*2]
+    SSE2_PRED_H_8X8_ONE_LINE [r1-8], r0+48
+    SSE2_PRED_H_8X8_ONE_LINE [r1+r2-8], r0+56
+    DEINIT_X86_32_PIC
+    ret
+
+;   void WelsI4x4LumaPredHD_sse2(uint8_t *pred,uint8_t *pRef,int32_t stride)
+WELS_EXTERN WelsI4x4LumaPredHD_sse2
+    %assign push_num 0
+    INIT_X86_32_PIC r3
+    LOAD_3_PARA
+    SIGN_EXTENSION r2, r2d
+    sub         r1, r2
+    movd        xmm0, [r1-1]
+    psllq       xmm0, 20h
+
+    movd        xmm1, [r1+2*r2-4]
+    movd        xmm3, [r1+r2-4]
+    punpcklbw   xmm1, xmm3
+    lea         r1, [r1+2*r2]
+    movd        xmm2, [r1+2*r2-4]
+    movd        xmm3, [r1+r2-4]
+    punpcklbw   xmm2, xmm3
+    punpcklwd   xmm2, xmm1
+    psrldq      xmm2, 8             ;MMX punpckhwd mm2,mm1
+    psrlq       xmm2, 20h
+    pxor        xmm0, xmm2
+
+    movdqa      xmm1, xmm0
+    psrlq       xmm1, 10h
+    movdqa      xmm2, xmm0
+    psrlq       xmm2, 8h
+    movdqa      xmm3, xmm2
+    movdqa      xmm4, xmm1
+    pavgb       xmm1, xmm0
+
+    pxor        xmm4, xmm0
+    pand        xmm4, [pic(mmx_01bytes)]
+    psubusb     xmm1, xmm4
+
+    pavgb       xmm2, xmm1
+
+    movdqa      xmm4, xmm0
+    pavgb       xmm3, xmm4
+    punpcklbw   xmm3, xmm2
+
+    psrlq       xmm2, 20h
+    psllq       xmm2, 30h
+    movdqa      xmm4, xmm3
+    psrlq       xmm4, 10h
+    pxor        xmm2, xmm4
+    psrlq       xmm2, 20h
+
+    movd        [r0], xmm2
+    movd        [r0+12], xmm3
+    psrlq       xmm3, 10h
+    movd        [r0+8], xmm3
+    psrlq       xmm3, 10h
+    movd        [r0+4], xmm3
+    DEINIT_X86_32_PIC
+    ret
+
+;   void WelsI4x4LumaPredHU_sse2(uint8_t *pred,uint8_t *pRef,int32_t stride)
+WELS_EXTERN WelsI4x4LumaPredHU_sse2
+    %assign push_num 0
+    INIT_X86_32_PIC r3
+    LOAD_3_PARA
+    SIGN_EXTENSION r2, r2d
+    movd        xmm0, [r1-4]
+    movd        xmm1, [r1+r2-4]
+    punpcklbw   xmm0, xmm1
+    lea         r1, [r1+2*r2]
+    movd        xmm2, [r1-4]
+    movd        xmm4, [r1+r2-4]
+    punpcklbw   xmm2, xmm4
+    punpcklwd   xmm0, xmm2
+    psrldq      xmm0, 8             ;MMX punpckhwd mm0,mm2
+
+    psrlq       xmm4, 18h
+    psllq       xmm4, 38h
+    psrlq       xmm0, 8h
+    pxor        xmm0, xmm4
+
+    movdqa      xmm1, xmm0
+    psllq       xmm1, 8h
+    movdqa      xmm3, xmm1
+    pavgb       xmm1, xmm0
+
+    movdqa      xmm2, xmm0
+    psllq       xmm2, 10h
+    movdqa      xmm5, xmm2
+    pavgb       xmm2, xmm0
+
+    pxor        xmm5, xmm0
+    pand        xmm5, [pic(mmx_01bytes)]
+    psubusb     xmm2, xmm5
+
+    pavgb       xmm2, xmm3
+
+    psrlq       xmm2, 8h
+    pxor        xmm2, xmm4
+
+    punpcklbw   xmm1, xmm2
+    psrldq      xmm1, 8             ;MMX punpckhbw mm1,mm2
+    punpcklbw   xmm4, xmm4
+    psrldq      xmm4, 8             ;MMX punpckhbw mm4,mm4
+    punpcklbw   xmm4, xmm4
+    psrldq      xmm4, 8             ;MMX punpckhbw mm4,mm4
+
+    psrlq       xmm4, 20h
+    movd        [r0+12], xmm4
+
+    movd        [r0], xmm1
+    psrlq       xmm1, 10h
+    movd        [r0+4], xmm1
+    psrlq       xmm1, 10h
+    movd        [r0+8], xmm1
+    DEINIT_X86_32_PIC
+    ret
+
+;   void WelsI4x4LumaPredVR_sse2(uint8_t *pred,uint8_t *pRef,int32_t stride)
+WELS_EXTERN WelsI4x4LumaPredVR_sse2
+    %assign push_num 0
+    INIT_X86_32_PIC r3
+    LOAD_3_PARA
+    SIGN_EXTENSION r2, r2d
+    sub         r1, r2
+    movq        xmm0, [r1-1]
+    psllq       xmm0, 18h
+
+    movd        xmm1, [r1+2*r2-4]
+    movd        xmm3, [r1+r2-4]
+    punpcklbw   xmm1, xmm3
+    lea         r1, [r1+2*r2]
+    movq        xmm2, [r1+r2-8]
+    punpcklwd   xmm2, xmm1
+    psrldq      xmm2, 8             ;MMX punpckhwd mm2,mm1
+    psrlq       xmm2, 28h
+    pxor        xmm0, xmm2
+
+    movdqa      xmm1, xmm0
+    psllq       xmm1, 8h
+    pavgb       xmm1, xmm0
+
+    movdqa      xmm2, xmm0
+    psllq       xmm2, 10h
+    movdqa      xmm3, xmm2
+    pavgb       xmm2, xmm0
+
+    pxor        xmm3, xmm0
+    pand        xmm3, [pic(mmx_01bytes)]
+    psubusb     xmm2, xmm3
+
+    movdqa      xmm3, xmm0
+    psllq       xmm3, 8h
+    pavgb       xmm3, xmm2
+    movdqa      xmm2, xmm3
+
+    psrlq       xmm1, 20h
+    movd        [r0], xmm1
+
+    psrlq       xmm2, 20h
+    movd        [r0+4], xmm2
+
+    movdqa      xmm4, xmm3
+    psllq       xmm4, 20h
+    psrlq       xmm4, 38h
+
+    movdqa      xmm5, xmm3
+    psllq       xmm5, 28h
+    psrlq       xmm5, 38h
+
+    psllq       xmm1, 8h
+    pxor        xmm4, xmm1
+    movd        [r0+8], xmm4
+
+    psllq       xmm2, 8h
+    pxor        xmm5, xmm2
+    movd        [r0+12], xmm5
+    DEINIT_X86_32_PIC
+    ret
+
+;   void WelsI4x4LumaPredDDL_sse2(uint8_t *pred,uint8_t *pRef,int32_t stride)
+WELS_EXTERN WelsI4x4LumaPredDDL_sse2
+    %assign push_num 0
+    INIT_X86_32_PIC r3
+    LOAD_3_PARA
+    SIGN_EXTENSION r2, r2d
+    sub         r1, r2
+    movq        xmm0, [r1]
+    movdqa      xmm1, xmm0
+    movdqa      xmm2, xmm0
+
+    movdqa      xmm3, xmm0
+    psrlq       xmm3, 38h
+    psllq       xmm3, 38h
+
+    psllq       xmm1, 8h
+    psrlq       xmm2, 8h
+    pxor        xmm2, xmm3
+
+    movdqa      xmm3, xmm1
+    pavgb       xmm1, xmm2
+    pxor        xmm3, xmm2
+    pand        xmm3, [pic(mmx_01bytes)]
+    psubusb     xmm1, xmm3
+
+    pavgb       xmm0, xmm1
+
+    psrlq       xmm0, 8h
+    movd        [r0], xmm0
+    psrlq       xmm0, 8h
+    movd        [r0+4], xmm0
+    psrlq       xmm0, 8h
+    movd        [r0+8], xmm0
+    psrlq       xmm0, 8h
+    movd        [r0+12], xmm0
+    DEINIT_X86_32_PIC
+    ret
+
+;   void WelsI4x4LumaPredVL_sse2(uint8_t *pred,uint8_t *pRef,int32_t stride)
+WELS_EXTERN WelsI4x4LumaPredVL_sse2
+    %assign push_num 0
+    INIT_X86_32_PIC r3
+    LOAD_3_PARA
+    SIGN_EXTENSION r2, r2d
+    sub         r1, r2
+    movq        xmm0, [r1]
+    movdqa      xmm1, xmm0
+    movdqa      xmm2, xmm0
+
+    psrlq       xmm1, 8h
+    psrlq       xmm2, 10h
+
+    movdqa      xmm3, xmm1
+    pavgb       xmm3, xmm0
+
+    movdqa      xmm4, xmm2
+    pavgb       xmm2, xmm0
+    pxor        xmm4, xmm0
+    pand        xmm4, [pic(mmx_01bytes)]
+    psubusb     xmm2, xmm4
+
+    pavgb       xmm2, xmm1
+
+    movd        [r0], xmm3
+    psrlq       xmm3, 8h
+    movd        [r0+8], xmm3
+
+    movd        [r0+4], xmm2
+    psrlq       xmm2, 8h
+    movd        [r0+12], xmm2
+    DEINIT_X86_32_PIC
+    ret
+
+;***********************************************************************
 ;
 ;   void WelsIChromaPredDc_sse2(uint8_t *pred, uint8_t *pRef, int32_t stride)
 ;***********************************************************************

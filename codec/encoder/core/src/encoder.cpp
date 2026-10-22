@@ -170,7 +170,9 @@ int32_t InitFunctionPointers (sWelsEncCtx* pEncCtx, SWelsSvcCodingParam* pParam,
     pFuncList->pfSetMemZeroSize64           = WelsSetMemZeroSize64_mmx;     // confirmed_safe_unsafe_usage
   }
   if (uiCpuFlag & WELS_CPU_SSE2) {
+    pFuncList->pfSetMemZeroSize8            = WelsSetMemZeroSize8_sse2;     // confirmed_safe_unsafe_usage
     pFuncList->pfSetMemZeroSize64Aligned16  = WelsSetMemZeroAligned64_sse2; // confirmed_safe_unsafe_usage
+    pFuncList->pfSetMemZeroSize64           = WelsSetMemZeroSize64_sse2;    // confirmed_safe_unsafe_usage
   }
 #endif//X86_ASM
 

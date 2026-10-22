@@ -54,6 +54,8 @@ extern "C" {
 
 void WelsCopy8x8_mmx (uint8_t* pDst, int32_t iStrideD, uint8_t* pSrc, int32_t iStrideS);
 void WelsCopy8x16_mmx (uint8_t* pDst, int32_t iStrideD, uint8_t* pSrc, int32_t iStrideS);
+void WelsCopy8x8_sse2 (uint8_t* pDst, int32_t iStrideD, uint8_t* pSrc, int32_t iStrideS);
+void WelsCopy8x16_sse2 (uint8_t* pDst, int32_t iStrideD, uint8_t* pSrc, int32_t iStrideS);
 void WelsCopy16x8NotAligned_sse2 (uint8_t* Dst, int32_t  iStrideD, uint8_t* Src, int32_t  iStrideS);
 void WelsCopy16x16_sse2 (uint8_t* Dst, int32_t  iStrideD, uint8_t* Src, int32_t  iStrideS);
 void WelsCopy16x16NotAligned_sse2 (uint8_t* Dst, int32_t  iStrideD, uint8_t* Src, int32_t  iStrideS);

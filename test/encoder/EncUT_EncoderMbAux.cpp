@@ -334,6 +334,10 @@ GENERATE_UT_FOR_COPY (8, 16, WelsCopy8x16_c);
 GENERATE_UT_FOR_COPY (16, 8, WelsCopy16x8_c);
 GENERATE_UT_FOR_COPY (16, 16, WelsCopy16x16_c);
 #ifdef X86_ASM
+GENERATE_UT_FOR_COPY (8, 8, WelsCopy8x8_mmx);
+GENERATE_UT_FOR_COPY (8, 16, WelsCopy8x16_mmx);
+GENERATE_UT_FOR_COPY (8, 8, WelsCopy8x8_sse2);
+GENERATE_UT_FOR_COPY (8, 16, WelsCopy8x16_sse2);
 GENERATE_UT_FOR_COPY (16, 8, WelsCopy16x8NotAligned_sse2);
 GENERATE_UT_FOR_COPY (16, 16, WelsCopy16x16NotAligned_sse2);
 GENERATE_UT_FOR_COPY (16, 16, WelsCopy16x16_sse2);
@@ -740,5 +744,57 @@ TEST (EncodeMbAuxTest, WelsHadamardT4Dc_mmi) {
   FREE_MEMORY (iDct);
   FREE_MEMORY (iLumaDcC);
   FREE_MEMORY (iLumaDcS);
+}
+#endif
+
+#ifdef X86_ASM
+// The chroma DC coefficients sit at every 16th word of pRes.
+typedef int32_t (*PHadamardQuant2x2Func) (int16_t* pRes, const int16_t kiFF, int16_t iMF, int16_t* pDct,
+    int16_t* pBlock);
+typedef int32_t (*PHadamardQuant2x2SkipFunc) (int16_t* pRes, int16_t iFF, int16_t iMF);
+
+static void TestHadamardQuant2x2 (PHadamardQuant2x2Func pfQuant, PHadamardQuant2x2SkipFunc pfSkip) {
+  for (int32_t iTest = 0; iTest < 4000; iTest++) {
+    ENFORCE_STACK_ALIGN_1D (int16_t, iResRef, 64, 16);
+    ENFORCE_STACK_ALIGN_1D (int16_t, iRes, 64, 16);
+    ENFORCE_STACK_ALIGN_1D (int16_t, iDctRef, 4, 16);
+    ENFORCE_STACK_ALIGN_1D (int16_t, iDct, 4, 16);
+    ENFORCE_STACK_ALIGN_1D (int16_t, iBlockRef, 4, 16);
+    ENFORCE_STACK_ALIGN_1D (int16_t, iBlock, 4, 16);
+    // Small residuals, so that many quantized coefficients are zero.
+    const int32_t kiRange = (iTest & 1) ? 4096 : 64;
+    for (int32_t i = 0; i < 64; i++)
+      iResRef[i] = iRes[i] = (int16_t) ((rand() % (2 * kiRange)) - kiRange);
+    const int16_t kiFF = (int16_t) (rand() % 1024);
+    const int16_t kiMF = (int16_t) (rand() % 16384);
+
+    // The C version answers whether any coefficient survives; the SIMD ones
+    // count them, and callers only test for nonzero. SIMD variants must also
+    // agree with each other exactly.
+    const int32_t kiSkipRef = WelsHadamardQuant2x2Skip_c (iResRef, kiFF, kiMF);
+    const int32_t kiSkip = pfSkip (iRes, kiFF, kiMF);
+    EXPECT_EQ (kiSkipRef != 0, kiSkip != 0);
+    if (pfSkip != WelsHadamardQuant2x2Skip_mmx && (WelsCPUFeatureDetect (0) & WELS_CPU_MMXEXT))
+      EXPECT_EQ (WelsHadamardQuant2x2Skip_mmx (iRes, kiFF, kiMF), kiSkip);
+
+    const int32_t kiRef = WelsHadamardQuant2x2_c (iResRef, kiFF, kiMF, iDctRef, iBlockRef);
+    EXPECT_EQ (kiRef, pfQuant (iRes, kiFF, kiMF, iDct, iBlock));
+    for (int32_t i = 0; i < 4; i++) {
+      EXPECT_EQ (iDctRef[i], iDct[i]);
+      EXPECT_EQ (iBlockRef[i], iBlock[i]);
+    }
+    for (int32_t i = 0; i < 64; i++)
+      EXPECT_EQ (iResRef[i], iRes[i]);
+  }
+}
+
+TEST (EncodeMbAuxTest, WelsHadamardQuant2x2_mmx) {
+  if (WelsCPUFeatureDetect (0) & WELS_CPU_MMXEXT)
+    TestHadamardQuant2x2 (WelsHadamardQuant2x2_mmx, WelsHadamardQuant2x2Skip_mmx);
+}
+
+TEST (EncodeMbAuxTest, WelsHadamardQuant2x2_sse2) {
+  if (WelsCPUFeatureDetect (0) & WELS_CPU_SSE2)
+    TestHadamardQuant2x2 (WelsHadamardQuant2x2_sse2, WelsHadamardQuant2x2Skip_sse2);
 }
 #endif
