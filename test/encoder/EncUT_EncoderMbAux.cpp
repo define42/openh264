@@ -761,12 +761,16 @@ static void TestHadamardQuant2x2 (PHadamardQuant2x2Func pfQuant, PHadamardQuant2
     ENFORCE_STACK_ALIGN_1D (int16_t, iDct, 4, 16);
     ENFORCE_STACK_ALIGN_1D (int16_t, iBlockRef, 4, 16);
     ENFORCE_STACK_ALIGN_1D (int16_t, iBlock, 4, 16);
-    // Small residuals, so that many quantized coefficients are zero.
-    const int32_t kiRange = (iTest & 1) ? 4096 : 64;
+    // DC values of 4x4 residual transforms, often small enough to quantize to
+    // zero, with the chroma DC parameters the encoder passes: the QP's first
+    // rounding and scale entries, doubled and halved.
+    const int32_t kiRange = (iTest & 1) ? 4080 : 64;
     for (int32_t i = 0; i < 64; i++)
-      iResRef[i] = iRes[i] = (int16_t) ((rand() % (2 * kiRange)) - kiRange);
-    const int16_t kiFF = (int16_t) (rand() % 1024);
-    const int16_t kiMF = (int16_t) (rand() % 16384);
+      iResRef[i] = iRes[i] = (int16_t) ((rand() % (2 * kiRange + 1)) - kiRange);
+    const int32_t kiQp = rand() % 52;
+    const int16_t* kpFF = (iTest & 2) ? g_kiQuantInterFF[kiQp] : g_iQuantIntraFF[kiQp];
+    const int16_t kiFF = (int16_t) (kpFF[0] << 1);
+    const int16_t kiMF = (int16_t) (g_kiQuantMF[kiQp][0] >> 1);
 
     // The C version answers whether any coefficient survives; the SIMD ones
     // count them, and callers only test for nonzero. SIMD variants must also
