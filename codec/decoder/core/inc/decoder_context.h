@@ -538,6 +538,10 @@ typedef struct tagSWelsDecThreadCtx {
   uint8_t* kpSrc;
   int32_t kiSrcLen;
   uint8_t** ppDst;
+  // Worker-owned plane pointers that ppDst points at. The caller's array must not be
+  // handed to the worker: the worker writes and re-reads it after the caller has
+  // returned and may already be clearing it for the next call.
+  uint8_t* pDstPlanes[3];
   SBufferInfo sDstInfo;
   PPicture pDec;
   SWelsDecEvent sImageReady;
