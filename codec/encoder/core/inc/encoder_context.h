@@ -113,6 +113,40 @@ typedef struct TagStrideTables {
   int16_t*      pMbIndexY[MAX_DEPENDENCY_LAYER];                // [iDid][iMbY]: map for iMbY in each spatial layer coding
 } SStrideTables;
 
+// State of the optional unchanged-macroblock hints (see unchanged.h). The
+// reference identity includes frame number and POC because picture buffers are
+// recycled. The caller's mask is borrowed only during EncodeFrame.
+// A reconstruction allocation and the generation of its last complete write.
+// Pixel identity includes plane origins and strides; POC does not take part.
+typedef struct TagReconstructedPictureVersion {
+  SPicture* pPicture;
+  uint64_t  uiGeneration;
+  uint8_t*  pData[3];
+  int32_t   iLineSize[3];
+} SReconstructedPictureVersion;
+
+// Level 5.2 MaxFS; larger pictures do not reuse reconstructions.
+#define UNCHANGED_MAX_MB_COUNT 139264
+
+typedef struct TagUnchangedFrameState {
+  const unsigned char* pMacroblocks;
+  int32_t   iMacroblockCount;
+  SPicture* pReference;
+  int32_t   iFrameNum;
+  int32_t   iPoc;
+  int32_t   iQp;
+  int32_t   iWidth;
+  int32_t   iHeight;
+
+  uint64_t  uiGeneration;
+  SReconstructedPictureVersion sPictures[2];
+  SReconstructedPictureVersion sSource;
+  SPicture* pReuseDestination;
+  int32_t   iFinalZeroSkipCount;
+  // Final coded zero-motion P_SKIPs of the last frame, not search heuristics.
+  bool      bFinalZeroSkip[UNCHANGED_MAX_MB_COUNT];
+} SUnchangedFrameState;
+
 typedef struct TagWelsEncCtx {
   SLogContext sLogCtx;
 // Input
@@ -227,6 +261,7 @@ typedef struct TagWelsEncCtx {
   int64_t            iLastStatisticsLogTs;
 
   int32_t iEncoderError;
+  SUnchangedFrameState sUnchanged;
   WELS_MUTEX mutexEncoderError;
   bool bDeliveryFlag;
   SStateCtx sWelsCabacContexts[4][WELS_QP_MAX + 1][WELS_CONTEXT_COUNT];

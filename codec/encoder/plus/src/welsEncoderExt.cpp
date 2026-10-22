@@ -32,6 +32,7 @@
 
 #include <assert.h>
 #include "welsEncoderExt.h"
+#include "unchanged.h"
 #include "welsCodecTrace.h"
 #include "typedefs.h"
 #include "wels_const.h"
@@ -373,6 +374,34 @@ int32_t CWelsH264SVCEncoder::Uninitialize() {
  *  SVC core encoding
  */
 int CWelsH264SVCEncoder::EncodeFrame (const SSourcePicture* kpSrcPic, SFrameBSInfo* pBsInfo) {
+  // Unchanged-macroblock hints are valid only for this call; the state that
+  // permits the next frame's hints is published only after success.
+  // A fatal encode error frees the context (and its preprocessing), so
+  // nothing may touch it once m_pEncContext changed; a new context starts
+  // with zeroed hint state.
+  sWelsEncCtx* pCtx = m_pEncContext;
+  CWelsPreProcess* pVpp = pCtx != NULL ? pCtx->pVpp : NULL;
+  if (pCtx != NULL) {
+    UnchangedFrameBegin (pCtx, kpSrcPic);
+    if (pVpp != NULL)
+      pVpp->VaaUnchangedBegin (pCtx, kpSrcPic);
+  }
+  const int kiResult = EncodeFrameChecked (kpSrcPic, pBsInfo);
+  if (pCtx != NULL && m_pEncContext == pCtx) {
+    const bool kbSuccess = kiResult == cmResultSuccess;
+    UnchangedFrameFinish (pCtx, kpSrcPic, pBsInfo, kbSuccess);
+    if (pVpp != NULL && pCtx->pVpp == pVpp) {
+      pVpp->VaaUnchangedFinish (pCtx, pBsInfo, kbSuccess);
+      pVpp->SourceCopyFinish (pBsInfo);
+    } else if (pCtx->pVpp != NULL) {
+      pCtx->pVpp->VaaUnchangedReset();
+      pCtx->pVpp->SourceCopyInvalidate();
+    }
+  }
+  return kiResult;
+}
+
+int CWelsH264SVCEncoder::EncodeFrameChecked (const SSourcePicture* kpSrcPic, SFrameBSInfo* pBsInfo) {
   if (! (kpSrcPic && m_bInitialFlag && pBsInfo)) {
     WelsLog (&m_pWelsTrace->m_sLogCtx, WELS_LOG_ERROR, "CWelsH264SVCEncoder::EncodeFrame(), cmInitParaError.");
     return cmInitParaError;

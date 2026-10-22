@@ -30,7 +30,9 @@ ENCODER_CPP_SRCS=\
 	$(ENCODER_SRCDIR)/core/src/svc_motion_estimate.cpp\
 	$(ENCODER_SRCDIR)/core/src/svc_set_mb_syn_cabac.cpp\
 	$(ENCODER_SRCDIR)/core/src/svc_set_mb_syn_cavlc.cpp\
+	$(ENCODER_SRCDIR)/core/src/unchanged.cpp\
 	$(ENCODER_SRCDIR)/core/src/wels_preprocess.cpp\
+	$(ENCODER_SRCDIR)/core/src/wels_preprocess_unchanged.cpp\
 	$(ENCODER_SRCDIR)/core/src/wels_task_base.cpp\
 	$(ENCODER_SRCDIR)/core/src/wels_task_encoder.cpp\
 	$(ENCODER_SRCDIR)/core/src/wels_task_management.cpp\

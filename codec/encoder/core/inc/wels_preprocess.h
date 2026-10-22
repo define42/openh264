@@ -115,8 +115,55 @@ typedef struct SVAAFrameInfoExt_t: public SVAAFrameInfo {
   uint8_t*    pVaaBlockStaticIdc[16];//real memory,
 } SVAAFrameInfoExt;
 
+// Unchanged-macroblock hint state of the preprocessing (see unchanged.h).
+// VAA compares ORIGINAL source pictures, unlike mode decision, which compares
+// reconstructions, so it tracks its own validated reference.
+typedef struct TagVaaUnchangedFrameState {
+  SPicture* pReference;
+  SPicture* pCurrent;
+  int32_t   iPoc;
+  int32_t   iWidth;
+  int32_t   iHeight;
+  const unsigned char* pMask;
+  int32_t   iMaskCount;
+  bool      bEnabled;
+} SVaaUnchangedFrameState;
+
+#define SOURCE_COPY_MAX_MB_COUNT 139264 // level 5.2 MaxFS
+
+// Original pictures rotate independently of reconstructions. A source buffer
+// usually holds frame N-2, so each resident buffer owns the union of damage
+// since its last refresh.
+typedef struct TagSourceCopyBuffer {
+  SPicture* pPicture;
+  uint8_t*  pData[3];
+  int32_t   iLineSize[3];
+  int32_t   iDirtyCount;
+  bool      bValid;
+  bool      bDirty[SOURCE_COPY_MAX_MB_COUNT];
+} SSourceCopyBuffer;
+
+typedef struct TagSourceCopyState {
+  SSourceCopyBuffer sBuffers[3];
+  SPicture* pReference;
+  SPicture* pCurrent;
+  int32_t   iPoc;
+  int32_t   iWidth;
+  int32_t   iHeight;
+  int32_t   iQp;
+  int32_t   iSliceMode;
+  uint32_t  uiSlices;
+  bool      bPartial;
+} SSourceCopyState;
+
 class CWelsPreProcess {
  public:
+  void VaaUnchangedBegin (sWelsEncCtx* pCtx, const SSourcePicture* kpSrc);
+  void VaaUnchangedFinish (sWelsEncCtx* pCtx, const SFrameBSInfo* kpBsInfo, bool bSuccess);
+  void VaaUnchangedReset();
+  void SourceCopyFinish (const SFrameBSInfo* kpBsInfo);
+  void SourceCopyInvalidate();
+
   CWelsPreProcess (sWelsEncCtx* pEncCtx);
   virtual  ~CWelsPreProcess();
 
@@ -193,6 +240,13 @@ class CWelsPreProcess {
   IWelsVP*         m_pInterfaceVp;
   sWelsEncCtx*     m_pEncCtx;
   uint8_t          m_uiSpatialLayersInTemporal[MAX_DEPENDENCY_LAYER];
+
+ private:
+  const unsigned char* VaaUnchangedMask (SPicture* pCurrent, SPicture* pReference, int32_t* pCount);
+  bool TryCopySource (SWelsSvcCodingParam* pParam, SPicture* pDst, const SSourcePicture* kpSrc, int32_t iWidth,
+                      int32_t iHeight);
+  SVaaUnchangedFrameState m_sVaaUnchanged;
+  SSourceCopyState* m_pSourceCopy;
 
  private:
   Scaled_Picture   m_sScaledPicture;

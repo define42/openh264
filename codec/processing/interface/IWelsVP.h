@@ -186,6 +186,10 @@ typedef struct {
   int iCalcSsd;
   int iReserved;
   SVAACalcResult*  pCalcResult;
+  // DevBox-Gateway-kvm extension: optional macroblocks whose source samples
+  // equal the reference's; their SADs are exactly zero. Borrowed during Process.
+  const unsigned char* pUnchangedMacroblocks;
+  int iUnchangedMacroblockCount;
 } SVAACalcParam;
 
 typedef struct {

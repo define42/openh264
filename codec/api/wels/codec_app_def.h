@@ -666,6 +666,13 @@ typedef struct Source_Picture_s {
   bool      bPsnrY;                ///< get Y PSNR for this frame
   bool      bPsnrU;                ///< get U PSNR for this frame
   bool      bPsnrV;                ///< get V PSNR for this frame
+  /// DevBox-Gateway-kvm extension: optional row-major hints, one per 16x16
+  /// macroblock. Nonzero certifies that every source sample of the macroblock is
+  /// unchanged since the preceding successfully encoded picture. Borrowed only
+  /// during EncodeFrame; NULL or a wrong count disables them. Zero-initialize
+  /// this structure so the fields stay disabled.
+  const unsigned char* pUnchangedMacroblocks;
+  int       iUnchangedMacroblockCount;
 } SSourcePicture;
 
 /**

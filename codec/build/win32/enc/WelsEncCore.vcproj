@@ -474,6 +474,10 @@
 				>
 			</File>
 			<File
+				RelativePath="..\..\..\encoder\core\src\unchanged.cpp"
+				>
+			</File>
+			<File
 				RelativePath="..\..\..\common\src\utils.cpp"
 				>
 			</File>
@@ -712,6 +716,10 @@
 			</File>
 			<File
 				RelativePath="..\..\..\encoder\core\inc\svc_set_mb_syn_cavlc.h"
+				>
+			</File>
+			<File
+				RelativePath="..\..\..\encoder\core\inc\unchanged.h"
 				>
 			</File>
 			<File
@@ -1485,6 +1493,10 @@
 			</File>
 			<File
 				RelativePath="..\..\..\encoder\core\src\wels_preprocess.cpp"
+				>
+			</File>
+			<File
+				RelativePath="..\..\..\encoder\core\src\wels_preprocess_unchanged.cpp"
 				>
 			</File>
 			<File

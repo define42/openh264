@@ -40,6 +40,7 @@
 
 #include "ls_defines.h"
 #include "svc_encode_slice.h"
+#include "unchanged.h"
 #include "svc_enc_golomb.h"
 #include "svc_base_layer_md.h"
 #include "svc_encode_mb.h"
@@ -1843,12 +1844,19 @@ int32_t WelsMdInterMbLoop (sWelsEncCtx* pEncCtx, SSlice* pSlice, void* pWelsMd, 
     pEncCtx->pFuncList->pfRc.pfWelsRcMbInit (pEncCtx, pCurMb, pSlice);
 
     //step (2). save some vale for future use, initial pWelsMd
-    WelsMdIntraInit (pEncCtx, pCurMb, pMbCache, kiSliceFirstMbXY);
-    WelsMdInterInit (pEncCtx, pSlice, pCurMb, kiSliceFirstMbXY);
+    WelsMdIntraInitPointers (pEncCtx, pCurMb, pMbCache, kiSliceFirstMbXY);
+    WelsMdInterInitPointers (pEncCtx, pSlice, pCurMb, kiSliceFirstMbXY);
+    bool bEarlySkip = TryUnchangedMacroblockEarly (pEncCtx, pMd, pSlice, pCurMb);
+    if (!bEarlySkip) {
+      WelsMdIntraInitNeighborCache (pCurMb, pMbCache, pCurLayer->iMbWidth);
+      WelsMdInterInitNeighborCache (pEncCtx, pSlice, pCurMb);
+    }
 
 TRY_REENCODING:
-    WelsInitInterMDStruc (pCurMb, pMvdCostTable, kiMvdInterTableStride, pMd);
-    pEncCtx->pFuncList->pfInterMd (pEncCtx, pMd, pSlice, pCurMb, pMbCache);
+    if (!bEarlySkip) {
+      WelsInitInterMDStruc (pCurMb, pMvdCostTable, kiMvdInterTableStride, pMd);
+      pEncCtx->pFuncList->pfInterMd (pEncCtx, pMd, pSlice, pCurMb, pMbCache);
+    }
     //mb_qp
 
     //step (4): save from the MD process from future use
@@ -1867,6 +1875,11 @@ TRY_REENCODING:
       if (iEncReturn == ENC_RETURN_VLCOVERFLOWFOUND && (pCurMb->uiLumaQp < 50)) {
         pSlice->iMbSkipRun = pEncCtx->pFuncList->pfStashPopMBStatus (&sDss, pSlice);
         UpdateQpForOverflow (pCurMb, kuiChromaQpIndexOffset);
+        if (bEarlySkip) {
+          bEarlySkip = false;
+          WelsMdIntraInitNeighborCache (pCurMb, pMbCache, pCurLayer->iMbWidth);
+          WelsMdInterInitNeighborCache (pEncCtx, pSlice, pCurMb);
+        }
         goto TRY_REENCODING;
       }
     }

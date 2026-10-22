@@ -30,6 +30,8 @@
  *
  */
 
+#include <stdlib.h>
+
 #include "wels_preprocess.h"
 #include "picture_handle.h"
 #include "encoder_context.h"
@@ -115,11 +117,16 @@ CWelsPreProcess::CWelsPreProcess (sWelsEncCtx* pEncCtx) {
   memset (m_pSpatialPic, 0, sizeof (m_pSpatialPic));
   memset (m_uiSpatialLayersInTemporal, 0, sizeof (m_uiSpatialLayersInTemporal));
   memset (m_uiSpatialPicNum, 0, sizeof (m_uiSpatialPicNum));
+  memset (&m_sVaaUnchanged, 0, sizeof (m_sVaaUnchanged));
+  // Large dirty maps; a failed allocation only disables partial source copies.
+  m_pSourceCopy = (SSourceCopyState*)calloc (1, sizeof (SSourceCopyState));
 }
 
 CWelsPreProcess::~CWelsPreProcess() {
   FreeScaledPic (&m_sScaledPicture,  m_pEncCtx->pMemAlign);
   WelsPreprocessDestroy();
+  free (m_pSourceCopy);
+  m_pSourceCopy = NULL;
 }
 
 int32_t CWelsPreProcess::WelsPreprocessCreate() {
@@ -138,6 +145,7 @@ exit:
 }
 
 int32_t CWelsPreProcess::WelsPreprocessDestroy() {
+  SourceCopyInvalidate();
   WelsDestroyVpInterface (m_pInterfaceVp, WELSVP_INTERFACE_VERION);
   m_pInterfaceVp = NULL;
 
@@ -145,6 +153,7 @@ int32_t CWelsPreProcess::WelsPreprocessDestroy() {
 }
 
 int32_t CWelsPreProcess::WelsPreprocessReset (sWelsEncCtx* pCtx, int32_t iWidth, int32_t iHeight) {
+  SourceCopyInvalidate();
   int32_t iRet = -1;
   SWelsSvcCodingParam* pSvcParam = pCtx->pSvcParam;
   //init source width and height
@@ -280,6 +289,8 @@ int32_t CWelsPreProcess::AnalyzeSpatialPic (sWelsEncCtx* pCtx, const int32_t kiD
     iRefTemporalIdx = m_uiSpatialLayersInTemporal[kiDidx] + pCtx->pVaa->uiValidLongTermPicIdx;
 
   SPicture* pCurPic = m_pSpatialPic[kiDidx][iCurTemporalIdx];
+  if (kiDidx == 0 && m_sVaaUnchanged.bEnabled)
+    m_sVaaUnchanged.pCurrent = pCurPic;
   bool bCalculateVar = (pSvcParam->iRCMode >= RC_BITRATE_MODE && pCtx->eSliceType == I_SLICE);
 
   if (pSvcParam->iUsageType == SCREEN_CONTENT_REAL_TIME) {
@@ -714,9 +725,19 @@ void CWelsPreProcess::VaaCalculation (SVAAFrameInfo* pVaaInfo, SPicture* pCurPic
     calc_param.iCalcBgd = bCalculateBGD;
     calc_param.iCalcSsd = bCalculateSQDiff;
     calc_param.pCalcResult = &pVaaInfo->sVaaCalcInfo;
+    if (!bCalculateVar && !bCalculateBGD && !bCalculateSQDiff)
+      calc_param.pUnchangedMacroblocks = VaaUnchangedMask (pCurPicture, pRefPicture,
+                                         &calc_param.iUnchangedMacroblockCount);
 
     m_pInterfaceVp->Set (iMethodIdx, &calc_param);
     m_pInterfaceVp->Process (iMethodIdx, &sCurPixMap, &sRefPixMap);
+    if (calc_param.pUnchangedMacroblocks != NULL) {
+      // Framework validation may reject the maps before the strategy can
+      // consume its borrowed hint. Release it on that path as well.
+      calc_param.pUnchangedMacroblocks = NULL;
+      calc_param.iUnchangedMacroblockCount = 0;
+      m_pInterfaceVp->Set (iMethodIdx, &calc_param);
+    }
   }
 }
 
@@ -1468,9 +1489,10 @@ int32_t  CWelsPreProcess::WelsMoveMemoryWrapper (SWelsSvcCodingParam* pSvcParam,
     return ENC_RETURN_INVALIDINPUT;
   } else {
     //i420_to_i420_c
-    WelsMoveMemory_c(pDstY, pDstU, pDstV, kiDstStrideY, kiDstStrideU,
-                     kiDstStrideV, pSrcY, pSrcU, pSrcV, kiSrcStrideY,
-                     kiSrcStrideU, kiSrcStrideV, iSrcWidth, iSrcHeight);
+    if (!TryCopySource (pSvcParam, pDstPic, kpSrc, kiTargetWidth, kiTargetHeight))
+      WelsMoveMemory_c(pDstY, pDstU, pDstV, kiDstStrideY, kiDstStrideU,
+                       kiDstStrideV, pSrcY, pSrcU, pSrcV, kiSrcStrideY,
+                       kiSrcStrideU, kiSrcStrideV, iSrcWidth, iSrcHeight);
 
     //in VP Process
     if (kiTargetWidth > iSrcWidth || kiTargetHeight > iSrcHeight) {

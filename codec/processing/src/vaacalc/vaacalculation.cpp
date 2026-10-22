@@ -30,6 +30,7 @@
  *
  */
 
+#include <string.h>
 #include "vaacalculation.h"
 #include "cpu.h"
 
@@ -117,7 +118,46 @@ void CVAACalculation::InitVaaFuncs (SVaaFuncs& sVaaFuncs, int32_t iCpuFlag) {
 #endif//HAVE_LASX
 }
 
+// Computes SADs over changed runs within each macroblock row. A valid hint
+// certifies source equality, so skipped SADs are exactly zero.
+static void VAACalcSadMasked (PVAACalcSadFunc pfCalc, const uint8_t* pCurData, const uint8_t* pRefData,
+                              int32_t iPicWidth, int32_t iPicHeight, int32_t iPicStride, int32_t* pFrameSad,
+                              int32_t* pSad8x8, const unsigned char* pUnchanged, int32_t iCount) {
+  const int32_t kiMbWidth = iPicWidth >> 4;
+  const int32_t kiMbHeight = iPicHeight >> 4;
+  if (iPicWidth <= 0 || iPicHeight <= 0 || (iPicWidth & 15) || (iPicHeight & 15) || pUnchanged == NULL ||
+      iCount != kiMbWidth * kiMbHeight) {
+    pfCalc (pCurData, pRefData, iPicWidth, iPicHeight, iPicStride, pFrameSad, pSad8x8);
+    return;
+  }
+  memset (pSad8x8, 0, (size_t)iCount * 4 * sizeof (int32_t));
+  int32_t iTotal = 0;
+  for (int32_t y = 0; y < kiMbHeight; ++y) {
+    const int32_t kiRow = y * kiMbWidth;
+    for (int32_t x = 0; x < kiMbWidth;) {
+      if (pUnchanged[kiRow + x]) {
+        ++x;
+        continue;
+      }
+      const int32_t kiStart = x;
+      while (x < kiMbWidth && !pUnchanged[kiRow + x])
+        ++x;
+      const int32_t kiOffset = y * 16 * iPicStride + kiStart * 16;
+      int32_t iRunSad = 0;
+      pfCalc (pCurData + kiOffset, pRefData + kiOffset, (x - kiStart) * 16, 16, iPicStride, &iRunSad,
+              pSad8x8 + (kiRow + kiStart) * 4);
+      iTotal += iRunSad;
+    }
+  }
+  *pFrameSad = iTotal;
+}
+
 EResult CVAACalculation::Process (int32_t iType, SPixMap* pSrcPixMap, SPixMap* pRefPixMap) {
+  const unsigned char* pUnchanged = m_sCalcParam.pUnchangedMacroblocks;
+  const int32_t kiUnchangedCount = m_sCalcParam.iUnchangedMacroblockCount;
+  // Never retain the caller-owned hints.
+  m_sCalcParam.pUnchangedMacroblocks = NULL;
+  m_sCalcParam.iUnchangedMacroblockCount = 0;
   uint8_t* pCurData     = (uint8_t*)pSrcPixMap->pPixel[0];
   uint8_t* pRefData     = (uint8_t*)pRefPixMap->pPixel[0];
   int32_t iPicWidth     = pSrcPixMap->sRect.iRectWidth;
@@ -150,8 +190,8 @@ EResult CVAACalculation::Process (int32_t iType, SPixMap* pSrcPixMap, SPixMap* p
         m_sVaaFuncs.pfVAACalcSadVar (pCurData, pRefData, iPicWidth, iPicHeight, iPicStride, &pResult->iFrameSad,
                                      (int32_t*)pResult->pSad8x8, pResult->pSum16x16, pResult->pSumOfSquare16x16);
       } else {
-        m_sVaaFuncs.pfVAACalcSad (pCurData, pRefData, iPicWidth, iPicHeight, iPicStride, &pResult->iFrameSad,
-                                  (int32_t*)pResult->pSad8x8);
+        VAACalcSadMasked (m_sVaaFuncs.pfVAACalcSad, pCurData, pRefData, iPicWidth, iPicHeight, iPicStride,
+                          &pResult->iFrameSad, (int32_t*)pResult->pSad8x8, pUnchanged, kiUnchangedCount);
       }
     }
   }

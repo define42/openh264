@@ -41,6 +41,7 @@
 #include "mv_pred.h"
 #include "svc_enc_golomb.h"
 #include "svc_base_layer_md.h"
+#include "unchanged.h"
 #include "encoder.h"
 #include "svc_encode_mb.h"
 #include "svc_encode_slice.h"
@@ -257,6 +258,13 @@ int32_t PredIntra4x4Mode (int8_t* pIntraPredMode, int32_t iIdx4) {
 }
 
 void WelsMdIntraInit (sWelsEncCtx* pEncCtx, SMB* pCurMb, SMbCache* pMbCache, const int32_t iSliceFirstMbXY) {
+  WelsMdIntraInitPointers (pEncCtx, pCurMb, pMbCache, iSliceFirstMbXY);
+  WelsMdIntraInitNeighborCache (pCurMb, pMbCache, pEncCtx->pCurDqLayer->iMbWidth);
+}
+
+// The unchanged-macroblock skip needs picture pointers but not neighbor caches,
+// so WelsMdIntraInit and WelsMdInterInit are split into their two halves.
+void WelsMdIntraInitPointers (sWelsEncCtx* pEncCtx, SMB* pCurMb, SMbCache* pMbCache, const int32_t iSliceFirstMbXY) {
   SDqLayer* pCurLayer = pEncCtx->pCurDqLayer;
 
   const int32_t kiMbX  = pCurMb->iMbX;
@@ -305,33 +313,34 @@ void WelsMdIntraInit (sWelsEncCtx* pEncCtx, SMB* pCurMb, SMbCache* pMbCache, con
     pMbCache->SPicData.pCsMb[1]         += MB_WIDTH_CHROMA;
     pMbCache->SPicData.pCsMb[2]         += MB_WIDTH_CHROMA;
   }
+}
 
+void WelsMdIntraInitNeighborCache (SMB* pCurMb, SMbCache* pMbCache, const int32_t kiMbWidth) {
   //step 2. initial pWelsMd
   pCurMb->uiCbp = 0;
 
   //step 4: locating scaled_tcoeff
 
   //step 1. load neighbor cache
-  FillNeighborCacheIntra (pMbCache, pCurMb, pCurLayer->iMbWidth);
+  FillNeighborCacheIntra (pMbCache, pCurMb, kiMbWidth);
   pMbCache->pMemPredLuma = pMbCache->pMemPredMb;// in WelsMdI16x16() will be changed, so re-init here!
   pMbCache->pMemPredChroma = pMbCache->pMemPredMb +
                              256;// Init with default, maybe change in WelsMdI16x16 and svc_md_i16x16_sad
 }
 
 void WelsMdInterInit (sWelsEncCtx* pEncCtx, SSlice* pSlice, SMB* pCurMb, const int32_t iSliceFirstMbXY) {
+  WelsMdInterInitPointers (pEncCtx, pSlice, pCurMb, iSliceFirstMbXY);
+  WelsMdInterInitNeighborCache (pEncCtx, pSlice, pCurMb);
+}
+
+void WelsMdInterInitPointers (sWelsEncCtx* pEncCtx, SSlice* pSlice, SMB* pCurMb, const int32_t iSliceFirstMbXY) {
   SDqLayer* pCurLayer = pEncCtx->pCurDqLayer;
   SMbCache* pMbCache  = &pSlice->sMbCacheInfo;
   const int32_t kiMbX  = pCurMb->iMbX;
   const int32_t kiMbY  = pCurMb->iMbY;
   const int32_t kiMbXY = pCurMb->iMbXY;
-  const int32_t kiMbWidth = pCurLayer->iMbWidth;
-  const int32_t kiMbHeight = pCurLayer->iMbHeight;
 
   pMbCache->pEncSad = &pCurLayer->pDecPic->pMbSkipSad[kiMbXY];
-
-  //step 1. load neighbor cache
-  pEncCtx->pFuncList->pfFillInterNeighborCache (pMbCache, pCurMb, kiMbWidth,
-      pEncCtx->pVaa->pVaaBackgroundMbFlag + kiMbXY); //BGD spatial pFunc
 
   //step 3: initial cost
 
@@ -353,6 +362,20 @@ void WelsMdInterInit (sWelsEncCtx* pEncCtx, SSlice* pSlice, SMB* pCurMb, const i
 
   pMbCache->uiRefMbType = pCurLayer->pRefPic->uiRefMbType[kiMbXY];
   pMbCache->bCollocatedPredFlag = false;
+}
+
+void WelsMdInterInitNeighborCache (sWelsEncCtx* pEncCtx, SSlice* pSlice, SMB* pCurMb) {
+  SDqLayer* pCurLayer = pEncCtx->pCurDqLayer;
+  SMbCache* pMbCache  = &pSlice->sMbCacheInfo;
+  const int32_t kiMbX  = pCurMb->iMbX;
+  const int32_t kiMbY  = pCurMb->iMbY;
+  const int32_t kiMbXY = pCurMb->iMbXY;
+  const int32_t kiMbWidth = pCurLayer->iMbWidth;
+  const int32_t kiMbHeight = pCurLayer->iMbHeight;
+
+  //step 1. load neighbor cache
+  pEncCtx->pFuncList->pfFillInterNeighborCache (pMbCache, pCurMb, kiMbWidth,
+      pEncCtx->pVaa->pVaaBackgroundMbFlag + kiMbXY); //BGD spatial pFunc
 
   //comment: sometimes, mode decision process may skip the md_p16x16 and md_pskip function,
   ST32 (&pCurMb->sP16x16Mv, 0);
@@ -1856,6 +1879,8 @@ bool WelsMdFirstIntraMode (sWelsEncCtx* pEncCtx, SWelsMD* pWelsMd, SMB* pCurMb, 
 }
 
 void WelsMdInterMb (sWelsEncCtx* pEncCtx, SWelsMD* pWelsMd, SSlice* pSlice, SMB* pCurMb, SMbCache* pUnused) {
+  if (TryUnchangedMacroblock (pEncCtx, pWelsMd, pSlice, pCurMb))
+    return;
   SDqLayer* pCurDqLayer             = pEncCtx->pCurDqLayer;
   SMbCache* pMbCache                = &pSlice->sMbCacheInfo;
   const uint32_t kuiNeighborAvail   = pCurMb->uiNeighborAvail;
