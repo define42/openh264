@@ -87,9 +87,13 @@ void WelsCabacContextInit (PWelsDecoderContext  pCtx, uint8_t eSliceType, int32_
 int32_t InitCabacDecEngineFromBS (PWelsCabacDecEngine pDecEngine, SBitStringAux* pBsAux);
 void RestoreCabacDecEngineToBS (PWelsCabacDecEngine pDecEngine, SBitStringAux* pBsAux);
 //3. actual decoding
-int32_t Read32BitsCabac (PWelsCabacDecEngine pDecEngine, uint32_t& uiValue, int32_t& iNumBitsRead);
-int32_t DecodeBinCabac (PWelsCabacDecEngine pDecEngine, PWelsCabacCtx pBinCtx, uint32_t& uiBit);
-int32_t DecodeBypassCabac (PWelsCabacDecEngine pDecEngine, uint32_t& uiBinVal);
+static inline int32_t Read32BitsCabac (PWelsCabacDecEngine pDecEngine, uint32_t& uiValue, int32_t& iNumBitsRead);
+int32_t DecodeBinCabacRefill (PWelsCabacDecEngine pDecEngine, uint64_t uiOffset, int32_t iBitsLeft);
+int32_t DecodeBypassCabacRefill (PWelsCabacDecEngine pDecEngine);
+static inline int32_t DecodeBinCabac (PWelsCabacDecEngine pDecEngine, PWelsCabacCtx pBinCtx, uint32_t& uiBit);
+static inline int32_t DecodeBinCabacLocal (PWelsCabacDecEngine pDecEngine, PWelsCabacCtx pBinCtx, uint32_t& uiBit);
+static inline int32_t DecodeBypassCabac (PWelsCabacDecEngine pDecEngine, uint32_t& uiBinVal);
+static inline int32_t DecodeBypassCabacLocal (PWelsCabacDecEngine pDecEngine, uint32_t& uiBinVal);
 int32_t  DecodeTerminateCabac (PWelsCabacDecEngine pDecEngine, uint32_t& uiBinVal);
 
 //4. unary parsing
@@ -106,6 +110,140 @@ int32_t DecodeUEGMvCabac (PWelsCabacDecEngine pDecEngine, PWelsCabacCtx pBinCtx,
 #define WELS_CABAC_FALSE_RETURN(iErrorInfo) \
 if(iErrorInfo) { \
   return iErrorInfo; \
+}
+
+static inline int32_t Read32BitsCabac (PWelsCabacDecEngine pDecEngine, uint32_t& uiValue, int32_t& iNumBitsRead) {
+  intX_t iLeftBytes = pDecEngine->pBuffEnd - pDecEngine->pBuffCurr;
+  const uint8_t* pCurr = pDecEngine->pBuffCurr;
+  iNumBitsRead = 0;
+  uiValue = 0;
+  if (iLeftBytes <= 0) {
+    return GENERATE_ERROR_NO (ERR_LEVEL_MB_DATA, ERR_CABAC_NO_BS_TO_READ);
+  }
+  switch (iLeftBytes) {
+  case 3:
+    uiValue = ((pCurr[0]) << 16 | (pCurr[1]) << 8 | (pCurr[2]));
+    pDecEngine->pBuffCurr += 3;
+    iNumBitsRead = 24;
+    break;
+  case 2:
+    uiValue = ((pCurr[0]) << 8 | (pCurr[1]));
+    pDecEngine->pBuffCurr += 2;
+    iNumBitsRead = 16;
+    break;
+  case 1:
+    uiValue = pCurr[0];
+    pDecEngine->pBuffCurr += 1;
+    iNumBitsRead = 8;
+    break;
+  default:
+    uiValue = ((uint32_t)pCurr[0] << 24) | ((uint32_t)pCurr[1] << 16) | ((uint32_t)pCurr[2] << 8) | pCurr[3];
+    pDecEngine->pBuffCurr += 4;
+    iNumBitsRead = 32;
+    break;
+  }
+  return ERR_NONE;
+}
+
+static inline int32_t DecodeBinCabacRefillInline (PWelsCabacDecEngine pDecEngine, uint64_t uiOffset, int32_t iBitsLeft) {
+  uint32_t uiVal = 0;
+  int32_t iNumBitsRead = 0;
+  int32_t iErrorInfo = Read32BitsCabac (pDecEngine, uiVal, iNumBitsRead);
+  pDecEngine->uiOffset = (uiOffset << iNumBitsRead) | uiVal;
+  pDecEngine->iBitsLeft = iBitsLeft + iNumBitsRead;
+  if (iErrorInfo && pDecEngine->iBitsLeft < 0) {
+    return iErrorInfo;
+  }
+  return ERR_NONE;
+}
+
+static inline int32_t DecodeBypassCabacRefillInline (PWelsCabacDecEngine pDecEngine) {
+  uint32_t uiVal = 0;
+  int32_t iNumBitsRead = 0;
+  WELS_CABAC_FALSE_RETURN (Read32BitsCabac (pDecEngine, uiVal, iNumBitsRead));
+  pDecEngine->uiOffset = (pDecEngine->uiOffset << iNumBitsRead) | uiVal;
+  pDecEngine->iBitsLeft = iNumBitsRead;
+  return ERR_NONE;
+}
+
+// Hot path of the arithmetic decoder, inlined into the syntax parsers. kbInlineRefill selects whether the (rare)
+// bitstream refill is inlined too: callers that work on a local copy of the engine use it so that the copy never
+// escapes and can be kept in registers.
+static inline int32_t DecodeBinCabacImpl (PWelsCabacDecEngine pDecEngine, PWelsCabacCtx pBinCtx, uint32_t& uiBinVal,
+    const bool kbInlineRefill) {
+  const uint32_t uiState = pBinCtx->uiState;
+  uint64_t uiOffset = pDecEngine->uiOffset;
+  uint64_t uiRange = pDecEngine->uiRange;
+  int32_t iBitsLeft = pDecEngine->iBitsLeft;
+  int32_t iRenorm = 1;
+  const uint32_t uiRangeLPS = g_kuiCabacRangeLps[uiState][ (uiRange >> 6) & 0x03];
+  uiBinVal = pBinCtx->uiMPS;
+  uiRange -= uiRangeLPS;
+  const uint64_t uiScaledRange = uiRange << iBitsLeft;
+  if (uiOffset >= uiScaledRange) { //LPS
+    uiOffset -= uiScaledRange;
+    uiBinVal ^= 0x0001;
+    if (!uiState)
+      pBinCtx->uiMPS ^= 0x01;
+    pBinCtx->uiState = g_kuiStateTransTable[uiState][0];
+    iRenorm = g_kRenormTable256[uiRangeLPS];
+    uiRange = (uiRangeLPS << iRenorm);
+  } else {  //MPS
+    pBinCtx->uiState = g_kuiStateTransTable[uiState][1];
+    if (uiRange >= WELS_CABAC_QUARTER) {
+      pDecEngine->uiRange = uiRange;
+      return ERR_NONE;
+    }
+    uiRange <<= 1;
+  }
+  //Renorm
+  pDecEngine->uiRange = uiRange;
+  iBitsLeft -= iRenorm;
+  if (iBitsLeft > 0) {
+    pDecEngine->iBitsLeft = iBitsLeft;
+    pDecEngine->uiOffset = uiOffset;
+    return ERR_NONE;
+  }
+  if (kbInlineRefill)
+    return DecodeBinCabacRefillInline (pDecEngine, uiOffset, iBitsLeft);
+  return DecodeBinCabacRefill (pDecEngine, uiOffset, iBitsLeft);
+}
+
+static inline int32_t DecodeBypassCabacImpl (PWelsCabacDecEngine pDecEngine, uint32_t& uiBinVal,
+    const bool kbInlineRefill) {
+  if (pDecEngine->iBitsLeft <= 0) {
+    WELS_CABAC_FALSE_RETURN (kbInlineRefill ? DecodeBypassCabacRefillInline (pDecEngine) : DecodeBypassCabacRefill (
+                               pDecEngine));
+  }
+  const int32_t iBitsLeft = pDecEngine->iBitsLeft - 1;
+  const uint64_t uiRangeValue = (pDecEngine->uiRange << iBitsLeft);
+  uint64_t uiOffset = pDecEngine->uiOffset;
+  pDecEngine->iBitsLeft = iBitsLeft;
+  if (uiOffset >= uiRangeValue) {
+    pDecEngine->uiOffset = uiOffset - uiRangeValue;
+    uiBinVal = 1;
+    return ERR_NONE;
+  }
+  uiBinVal = 0;
+  return ERR_NONE;
+}
+
+static inline int32_t DecodeBinCabac (PWelsCabacDecEngine pDecEngine, PWelsCabacCtx pBinCtx, uint32_t& uiBinVal) {
+  return DecodeBinCabacImpl (pDecEngine, pBinCtx, uiBinVal, false);
+}
+
+// Same as DecodeBinCabac but fully inlined; meant for a local (stack) copy of the engine.
+static inline int32_t DecodeBinCabacLocal (PWelsCabacDecEngine pDecEngine, PWelsCabacCtx pBinCtx, uint32_t& uiBinVal) {
+  return DecodeBinCabacImpl (pDecEngine, pBinCtx, uiBinVal, true);
+}
+
+static inline int32_t DecodeBypassCabac (PWelsCabacDecEngine pDecEngine, uint32_t& uiBinVal) {
+  return DecodeBypassCabacImpl (pDecEngine, uiBinVal, false);
+}
+
+// Same as DecodeBypassCabac but fully inlined; meant for a local (stack) copy of the engine.
+static inline int32_t DecodeBypassCabacLocal (PWelsCabacDecEngine pDecEngine, uint32_t& uiBinVal) {
+  return DecodeBypassCabacImpl (pDecEngine, uiBinVal, true);
 }
 }
 #endif
