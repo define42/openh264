@@ -771,3 +771,198 @@ WELS_EXTERN McCopyWidthEq16_sse3
     pop             r5
 %endif
     ret
+
+
+;*******************************************************************************
+; Explicit weighted prediction, in place (8.4.2.3.2):
+; pDst[x] = Clip1 (((pDst[x] * iWeight + ((1 << iLog2Denom) >> 1)) >> iLog2Denom) + iOffset)
+; Exact in 16 bits for 0 <= iLog2Denom <= 7, -128 <= iWeight <= 128 and -128 <= iOffset <= 127.
+;
+; void WeightedPredWidthEq4_sse2 / WeightedPredWidthEq8_sse2 / WeightedPredWidthEq16_sse2 (
+;     uint8_t* pDst, int32_t iDstStride, int32_t iHeight, int32_t iLog2Denom, int32_t iWeight, int32_t iOffset);
+;*******************************************************************************
+%macro WEIGHTED_PRED_SETUP 0
+    %assign push_num 0
+    LOAD_3_PARA
+    SIGN_EXTENSION  r1, r1d
+    SIGN_EXTENSION  r2, r2d
+    movd        xmm2, arg4d             ; shift
+    movd        xmm4, arg5d             ; weight
+    movd        xmm3, arg6d             ; offset
+    pshuflw     xmm4, xmm4, 0
+    punpcklqdq  xmm4, xmm4
+    pshuflw     xmm3, xmm3, 0
+    punpcklqdq  xmm3, xmm3
+    pcmpeqw     xmm1, xmm1
+    psrlw       xmm1, 15
+    psllw       xmm1, xmm2
+    psrlw       xmm1, 1                 ; rounding: (1 << iLog2Denom) >> 1
+    pxor        xmm5, xmm5
+%endmacro
+
+; %1: xmm holding 8 pixels as words, result left in %1 as words
+%macro WEIGHTED_PRED_8W 1
+    pmullw      %1, xmm4
+    paddw       %1, xmm1
+    psraw       %1, xmm2
+    paddsw      %1, xmm3
+%endmacro
+
+WELS_EXTERN WeightedPredWidthEq4_sse2
+    WEIGHTED_PRED_SETUP
+.height_loop:
+    movd        xmm0, [r0]
+    punpcklbw   xmm0, xmm5
+    WEIGHTED_PRED_8W xmm0
+    packuswb    xmm0, xmm0
+    movd        [r0], xmm0
+    add         r0, r1
+    dec         r2
+    jnz         .height_loop
+    ret
+
+WELS_EXTERN WeightedPredWidthEq8_sse2
+    WEIGHTED_PRED_SETUP
+.height_loop:
+    movq        xmm0, [r0]
+    punpcklbw   xmm0, xmm5
+    WEIGHTED_PRED_8W xmm0
+    packuswb    xmm0, xmm0
+    movq        [r0], xmm0
+    add         r0, r1
+    dec         r2
+    jnz         .height_loop
+    ret
+
+WELS_EXTERN WeightedPredWidthEq16_sse2
+    WEIGHTED_PRED_SETUP
+    PUSH_XMM 7
+.height_loop:
+    movdqu      xmm0, [r0]
+    movdqa      xmm6, xmm0
+    punpcklbw   xmm0, xmm5
+    punpckhbw   xmm6, xmm5
+    WEIGHTED_PRED_8W xmm0
+    WEIGHTED_PRED_8W xmm6
+    packuswb    xmm0, xmm6
+    movdqu      [r0], xmm0
+    add         r0, r1
+    dec         r2
+    jnz         .height_loop
+    POP_XMM
+    ret
+
+
+;*******************************************************************************
+; Weighted bi-prediction, result written over pDst (8.4.2.3.2):
+; pDst[x] = Clip1 (((pDst[x] * iWeight0 + pSrc[x] * iWeight1 + ((1 << iShift) >> 1)) >> iShift) + iOffset)
+; with iShift = iLog2Denom + 1 and iWeights = (iWeight0 & 0xffff) | (iWeight1 << 16).
+; The products are summed in 32 bits; exact for 1 <= iShift <= 8, weights in [-128, 128] and offset in [-128, 127].
+;
+; void BiWeightedPredWidthEq4_sse2 / BiWeightedPredWidthEq8_sse2 / BiWeightedPredWidthEq16_sse2 (
+;     uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrc, int32_t iSrcStride, int32_t iHeight,
+;     int32_t iShift, int32_t iWeights, int32_t iOffset);
+;*******************************************************************************
+%macro BI_WEIGHTED_PRED_SETUP 0
+    %assign push_num 0
+    LOAD_5_PARA
+    SIGN_EXTENSION  r1, r1d
+    SIGN_EXTENSION  r3, r3d
+    SIGN_EXTENSION  r4, r4d
+    movd        xmm2, arg6d             ; shift
+    movd        xmm4, arg7d             ; weight pair
+    movd        xmm3, arg8d             ; offset
+    pshufd      xmm4, xmm4, 0
+    pshuflw     xmm3, xmm3, 0
+    punpcklqdq  xmm3, xmm3
+    pcmpeqd     xmm1, xmm1
+    psrld       xmm1, 31
+    pslld       xmm1, xmm2
+    psrld       xmm1, 1                 ; rounding: (1 << iShift) >> 1
+    pxor        xmm5, xmm5
+%endmacro
+
+; %1: xmm holding 4 (dst, src) pixel pairs as interleaved words, result left in %1 as dwords
+%macro BI_WEIGHTED_PRED_4D 1
+    pmaddwd     %1, xmm4
+    paddd       %1, xmm1
+    psrad       %1, xmm2
+%endmacro
+
+WELS_EXTERN BiWeightedPredWidthEq4_sse2
+    BI_WEIGHTED_PRED_SETUP
+    PUSH_XMM 7
+.height_loop:
+    movd        xmm0, [r0]
+    movd        xmm6, [r2]
+    punpcklbw   xmm0, xmm6
+    punpcklbw   xmm0, xmm5
+    BI_WEIGHTED_PRED_4D xmm0
+    packssdw    xmm0, xmm0
+    paddsw      xmm0, xmm3
+    packuswb    xmm0, xmm0
+    movd        [r0], xmm0
+    add         r0, r1
+    add         r2, r3
+    dec         r4
+    jnz         .height_loop
+    POP_XMM
+    LOAD_5_PARA_POP
+    ret
+
+WELS_EXTERN BiWeightedPredWidthEq8_sse2
+    BI_WEIGHTED_PRED_SETUP
+    PUSH_XMM 7
+.height_loop:
+    movq        xmm0, [r0]
+    movq        xmm6, [r2]
+    punpcklbw   xmm0, xmm6
+    movdqa      xmm6, xmm0
+    punpcklbw   xmm0, xmm5
+    punpckhbw   xmm6, xmm5
+    BI_WEIGHTED_PRED_4D xmm0
+    BI_WEIGHTED_PRED_4D xmm6
+    packssdw    xmm0, xmm6
+    paddsw      xmm0, xmm3
+    packuswb    xmm0, xmm0
+    movq        [r0], xmm0
+    add         r0, r1
+    add         r2, r3
+    dec         r4
+    jnz         .height_loop
+    POP_XMM
+    LOAD_5_PARA_POP
+    ret
+
+WELS_EXTERN BiWeightedPredWidthEq16_sse2
+    BI_WEIGHTED_PRED_SETUP
+    PUSH_XMM 8
+.height_loop:
+    movdqu      xmm0, [r0]
+    movdqu      xmm6, [r2]
+    movdqa      xmm7, xmm0
+    punpcklbw   xmm0, xmm6
+    punpckhbw   xmm7, xmm6
+    movdqa      xmm6, xmm0
+    punpcklbw   xmm0, xmm5
+    punpckhbw   xmm6, xmm5
+    BI_WEIGHTED_PRED_4D xmm0
+    BI_WEIGHTED_PRED_4D xmm6
+    packssdw    xmm0, xmm6
+    movdqa      xmm6, xmm7
+    punpcklbw   xmm7, xmm5
+    punpckhbw   xmm6, xmm5
+    BI_WEIGHTED_PRED_4D xmm7
+    BI_WEIGHTED_PRED_4D xmm6
+    packssdw    xmm7, xmm6
+    paddsw      xmm0, xmm3
+    paddsw      xmm7, xmm3
+    packuswb    xmm0, xmm7
+    movdqu      [r0], xmm0
+    add         r0, r1
+    add         r2, r3
+    dec         r4
+    jnz         .height_loop
+    POP_XMM
+    LOAD_5_PARA_POP
+    ret

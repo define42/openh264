@@ -298,168 +298,71 @@ void BaseMC (PWelsDecoderContext pCtx, sMCRefMember* pMCRefMem, const int32_t& l
 
 }
 
-static void WeightPrediction (PDqLayer pCurDqLayer, sMCRefMember* pMCRefMem, int32_t listIdx, int32_t iRefIdx,
-                              int32_t iBlkWidth,
-                              int32_t iBlkHeight) {
-
-
-  int32_t iLog2denom, iWoc, iOoc;
-  int32_t iPredTemp, iLineStride;
-  int32_t iPixel = 0;
-  uint8_t* pDst;
+static void WeightPrediction (const SMcFunc* pMCFunc, PDqLayer pCurDqLayer, sMCRefMember* pMCRefMem, int32_t listIdx,
+                              int32_t iRefIdx, int32_t iBlkWidth, int32_t iBlkHeight) {
+  const PPredWeightTabSyn pWt = pCurDqLayer->pPredWeightTable;
   //luma
-  iLog2denom = pCurDqLayer->pPredWeightTable->uiLumaLog2WeightDenom;
-  iWoc = pCurDqLayer->pPredWeightTable->sPredList[listIdx].iLumaWeight[iRefIdx];
-  iOoc = pCurDqLayer->pPredWeightTable->sPredList[listIdx].iLumaOffset[iRefIdx];
-  iLineStride = pMCRefMem->iDstLineLuma;
-
-  for (int i = 0; i < iBlkHeight; i++) {
-    for (int j = 0; j < iBlkWidth; j++) {
-      iPixel = j + i * (iLineStride);
-      if (iLog2denom >= 1) {
-        iPredTemp = ((pMCRefMem->pDstY[iPixel] * iWoc + (1 << (iLog2denom - 1))) >> iLog2denom) + iOoc;
-
-        pMCRefMem->pDstY[iPixel] = WELS_CLIP3 (iPredTemp, 0, 255);
-      } else {
-        iPredTemp = pMCRefMem->pDstY[iPixel] * iWoc + iOoc;
-
-        pMCRefMem->pDstY[iPixel] = WELS_CLIP3 (iPredTemp, 0, 255);
-
-      }
-    }
-  }
-
+  pMCFunc->pfWeightedPred (pMCRefMem->pDstY, pMCRefMem->iDstLineLuma, iBlkWidth, iBlkHeight,
+                           pWt->uiLumaLog2WeightDenom, pWt->sPredList[listIdx].iLumaWeight[iRefIdx],
+                           pWt->sPredList[listIdx].iLumaOffset[iRefIdx]);
 
   //UV
   iBlkWidth = iBlkWidth >> 1;
   iBlkHeight = iBlkHeight >> 1;
-  iLog2denom = pCurDqLayer->pPredWeightTable->uiChromaLog2WeightDenom;
-  iLineStride = pMCRefMem->iDstLineChroma;
-
   for (int i = 0; i < 2; i++) {
-
-
-    //iLog2denom = pCurDqLayer->pPredWeightTable->uiChromaLog2WeightDenom;
-    iWoc =  pCurDqLayer->pPredWeightTable->sPredList[listIdx].iChromaWeight[iRefIdx][i];
-    iOoc = pCurDqLayer->pPredWeightTable->sPredList[listIdx].iChromaOffset[iRefIdx][i];
-    pDst = i ? pMCRefMem->pDstV : pMCRefMem->pDstU;
-    //iLineStride = pMCRefMem->iDstLineChroma;
-
-    for (int i = 0; i < iBlkHeight ; i++) {
-      for (int j = 0; j < iBlkWidth; j++) {
-        iPixel = j + i * (iLineStride);
-        if (iLog2denom >= 1) {
-          iPredTemp = ((pDst[iPixel] * iWoc + (1 << (iLog2denom - 1))) >> iLog2denom) + iOoc;
-
-          pDst[iPixel] = WELS_CLIP3 (iPredTemp, 0, 255);
-        } else {
-          iPredTemp = pDst[iPixel] * iWoc + iOoc;
-
-          pDst[iPixel] = WELS_CLIP3 (iPredTemp, 0, 255);
-
-        }
-      }
-
-    }
-
-
+    pMCFunc->pfWeightedPred (i ? pMCRefMem->pDstV : pMCRefMem->pDstU, pMCRefMem->iDstLineChroma, iBlkWidth, iBlkHeight,
+                             pWt->uiChromaLog2WeightDenom, pWt->sPredList[listIdx].iChromaWeight[iRefIdx][i],
+                             pWt->sPredList[listIdx].iChromaOffset[iRefIdx][i]);
   }
 }
 
-static void BiWeightPrediction (PDqLayer pCurDqLayer, sMCRefMember* pMCRefMem, sMCRefMember* pTempMCRefMem,
-                                int32_t iRefIdx1, int32_t iRefIdx2, bool bWeightedBipredIdcIs1, int32_t iBlkWidth,
-                                int32_t iBlkHeight) {
+static void BiWeightPrediction (const SMcFunc* pMCFunc, PDqLayer pCurDqLayer, sMCRefMember* pMCRefMem,
+                                sMCRefMember* pTempMCRefMem, int32_t iRefIdx1, int32_t iRefIdx2,
+                                bool bWeightedBipredIdcIs1, int32_t iBlkWidth, int32_t iBlkHeight) {
+  const PPredWeightTabSyn pWt = pCurDqLayer->pPredWeightTable;
   int32_t iWoc1 = 0, iOoc1 = 0, iWoc2 = 0, iOoc2 = 0;
-  int32_t iPredTemp, iLineStride;
-  int32_t iPixel = 0;
   //luma
-  int32_t iLog2denom = pCurDqLayer->pPredWeightTable->uiLumaLog2WeightDenom;
   if (bWeightedBipredIdcIs1) {
-    iWoc1 = pCurDqLayer->pPredWeightTable->sPredList[LIST_0].iLumaWeight[iRefIdx1];
-    iOoc1 = pCurDqLayer->pPredWeightTable->sPredList[LIST_0].iLumaOffset[iRefIdx1];
-    iWoc2 = pCurDqLayer->pPredWeightTable->sPredList[LIST_1].iLumaWeight[iRefIdx2];
-    iOoc2 = pCurDqLayer->pPredWeightTable->sPredList[LIST_1].iLumaOffset[iRefIdx2];
+    iWoc1 = pWt->sPredList[LIST_0].iLumaWeight[iRefIdx1];
+    iOoc1 = pWt->sPredList[LIST_0].iLumaOffset[iRefIdx1];
+    iWoc2 = pWt->sPredList[LIST_1].iLumaWeight[iRefIdx2];
+    iOoc2 = pWt->sPredList[LIST_1].iLumaOffset[iRefIdx2];
   } else {
-    iWoc1 = pCurDqLayer->pPredWeightTable->iImplicitWeight[iRefIdx1][iRefIdx2];
+    iWoc1 = pWt->iImplicitWeight[iRefIdx1][iRefIdx2];
     iWoc2 = 64 - iWoc1;
   }
-  iLineStride = pMCRefMem->iDstLineLuma;
-
-  for (int i = 0; i < iBlkHeight; i++) {
-    for (int j = 0; j < iBlkWidth; j++) {
-      iPixel = j + i * (iLineStride);
-      iPredTemp = ((pMCRefMem->pDstY[iPixel] * iWoc1 + pTempMCRefMem->pDstY[iPixel] * iWoc2 + (1 << iLog2denom)) >>
-                   (iLog2denom + 1)) + ((iOoc1 + iOoc2 + 1) >> 1);
-      pMCRefMem->pDstY[iPixel] = WELS_CLIP3 (iPredTemp, 0, 255);
-    }
-  }
+  pMCFunc->pfBiWeightedPred (pMCRefMem->pDstY, pMCRefMem->iDstLineLuma, pTempMCRefMem->pDstY, pMCRefMem->iDstLineLuma,
+                             iBlkWidth, iBlkHeight, pWt->uiLumaLog2WeightDenom, iWoc1, iWoc2, (iOoc1 + iOoc2 + 1) >> 1);
 
   //UV
   iBlkWidth = iBlkWidth >> 1;
   iBlkHeight = iBlkHeight >> 1;
-  iLog2denom = pCurDqLayer->pPredWeightTable->uiChromaLog2WeightDenom;
-  iLineStride = pMCRefMem->iDstLineChroma;
-
-  uint8_t* pDst;
-  uint8_t* pTempDst;
   for (int k = 0; k < 2; k++) {
-    //iLog2denom = pCurDqLayer->pPredWeightTable->uiChromaLog2WeightDenom;
     if (bWeightedBipredIdcIs1) {
-      iWoc1 = pCurDqLayer->pPredWeightTable->sPredList[LIST_0].iChromaWeight[iRefIdx1][k];
-      iOoc1 = pCurDqLayer->pPredWeightTable->sPredList[LIST_0].iChromaOffset[iRefIdx1][k];
-      iWoc2 = pCurDqLayer->pPredWeightTable->sPredList[LIST_1].iChromaWeight[iRefIdx2][k];
-      iOoc2 = pCurDqLayer->pPredWeightTable->sPredList[LIST_1].iChromaOffset[iRefIdx2][k];
+      iWoc1 = pWt->sPredList[LIST_0].iChromaWeight[iRefIdx1][k];
+      iOoc1 = pWt->sPredList[LIST_0].iChromaOffset[iRefIdx1][k];
+      iWoc2 = pWt->sPredList[LIST_1].iChromaWeight[iRefIdx2][k];
+      iOoc2 = pWt->sPredList[LIST_1].iChromaOffset[iRefIdx2][k];
     }
-    pDst  = k ? pMCRefMem->pDstV : pMCRefMem->pDstU;
-    pTempDst = k ? pTempMCRefMem->pDstV : pTempMCRefMem->pDstU;
-    //iLineStride = pMCRefMem->iDstLineChroma;
-
-    for (int i = 0; i < iBlkHeight; i++) {
-      for (int j = 0; j < iBlkWidth; j++) {
-        iPixel = j + i * (iLineStride);
-        iPredTemp = ((pDst[iPixel] * iWoc1 + pTempDst[iPixel] * iWoc2 + (1 << iLog2denom)) >> (iLog2denom + 1)) + ((
-                      iOoc1 + iOoc2 + 1) >> 1);
-        pDst[iPixel] = WELS_CLIP3 (iPredTemp, 0, 255);
-      }
-    }
+    pMCFunc->pfBiWeightedPred (k ? pMCRefMem->pDstV : pMCRefMem->pDstU, pMCRefMem->iDstLineChroma,
+                               k ? pTempMCRefMem->pDstV : pTempMCRefMem->pDstU, pMCRefMem->iDstLineChroma,
+                               iBlkWidth, iBlkHeight, pWt->uiChromaLog2WeightDenom, iWoc1, iWoc2, (iOoc1 + iOoc2 + 1) >> 1);
   }
 }
 
-static void BiPrediction (PDqLayer pCurDqLayer, sMCRefMember* pMCRefMem, sMCRefMember* pTempMCRefMem, int32_t iBlkWidth,
-                          int32_t iBlkHeight) {
-  int32_t iPredTemp, iLineStride;
-  int32_t iPixel = 0;
+static void BiPrediction (const SMcFunc* pMCFunc, sMCRefMember* pMCRefMem, sMCRefMember* pTempMCRefMem,
+                          int32_t iBlkWidth, int32_t iBlkHeight) {
   //luma
-  iLineStride = pMCRefMem->iDstLineLuma;
-
-  for (int i = 0; i < iBlkHeight; i++) {
-    for (int j = 0; j < iBlkWidth; j++) {
-      iPixel = j + i * (iLineStride);
-      iPredTemp = (pMCRefMem->pDstY[iPixel] + pTempMCRefMem->pDstY[iPixel] + 1) >> 1;
-      pMCRefMem->pDstY[iPixel] = WELS_CLIP3 (iPredTemp, 0, 255);
-    }
-  }
+  pMCFunc->pfBiPred (pMCRefMem->pDstY, pMCRefMem->iDstLineLuma, pTempMCRefMem->pDstY, pMCRefMem->iDstLineLuma,
+                     iBlkWidth, iBlkHeight);
 
   //UV
   iBlkWidth = iBlkWidth >> 1;
   iBlkHeight = iBlkHeight >> 1;
-  iLineStride = pMCRefMem->iDstLineChroma;
-
-  uint8_t* pDst;
-  uint8_t* pTempDst;
-  for (int k = 0; k < 2; k++) {
-    pDst = k ? pMCRefMem->pDstV : pMCRefMem->pDstU;
-    pTempDst = k ? pTempMCRefMem->pDstV : pTempMCRefMem->pDstU;
-    //iLineStride = pMCRefMem->iDstLineChroma;
-
-    for (int i = 0; i < iBlkHeight; i++) {
-      for (int j = 0; j < iBlkWidth; j++) {
-        iPixel = j + i * (iLineStride);
-        iPredTemp = (pDst[iPixel] + pTempDst[iPixel] + 1) >> 1;
-        pDst[iPixel] = WELS_CLIP3 (iPredTemp, 0, 255);
-      }
-    }
-  }
+  pMCFunc->pfBiPred (pMCRefMem->pDstU, pMCRefMem->iDstLineChroma, pTempMCRefMem->pDstU, pMCRefMem->iDstLineChroma,
+                     iBlkWidth, iBlkHeight);
+  pMCFunc->pfBiPred (pMCRefMem->pDstV, pMCRefMem->iDstLineChroma, pTempMCRefMem->pDstV, pMCRefMem->iDstLineChroma,
+                     iBlkWidth, iBlkHeight);
 }
 
 int32_t GetInterPred (uint8_t* pPredY, uint8_t* pPredCb, uint8_t* pPredCr, PWelsDecoderContext pCtx) {
@@ -504,7 +407,7 @@ int32_t GetInterPred (uint8_t* pPredY, uint8_t* pPredCb, uint8_t* pPredCr, PWels
 
     if (pCurDqLayer->bUseWeightPredictionFlag) {
       iRefIndex = pCurDqLayer->pDec->pRefIndex[0][iMBXY][0];
-      WeightPrediction (pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 16, 16);
+      WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 16, 16);
     }
     break;
   case MB_TYPE_16x8:
@@ -515,7 +418,7 @@ int32_t GetInterPred (uint8_t* pPredY, uint8_t* pPredCb, uint8_t* pPredCr, PWels
     BaseMC (pCtx, &pMCRefMem, LIST_0, iRefIndex, iMBOffsetX, iMBOffsetY, pMCFunc, 16, 8, iMVs);
 
     if (pCurDqLayer->bUseWeightPredictionFlag) {
-      WeightPrediction (pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 16, 8);
+      WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 16, 8);
     }
 
     iMVs[0] = pCurDqLayer->pDec->pMv[0][iMBXY][8][0];
@@ -528,7 +431,7 @@ int32_t GetInterPred (uint8_t* pPredY, uint8_t* pPredCb, uint8_t* pPredCr, PWels
     BaseMC (pCtx, &pMCRefMem, LIST_0, iRefIndex, iMBOffsetX, iMBOffsetY + 8, pMCFunc, 16, 8, iMVs);
 
     if (pCurDqLayer->bUseWeightPredictionFlag) {
-      WeightPrediction (pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 16, 8);
+      WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 16, 8);
     }
     break;
   case MB_TYPE_8x16:
@@ -538,7 +441,7 @@ int32_t GetInterPred (uint8_t* pPredY, uint8_t* pPredCb, uint8_t* pPredCr, PWels
     WELS_B_MB_REC_VERIFY (GetRefPic (&pMCRefMem, pCtx, iRefIndex, LIST_0));
     BaseMC (pCtx, &pMCRefMem, LIST_0, iRefIndex, iMBOffsetX, iMBOffsetY, pMCFunc, 8, 16, iMVs);
     if (pCurDqLayer->bUseWeightPredictionFlag) {
-      WeightPrediction (pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 8, 16);
+      WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 8, 16);
     }
 
     iMVs[0] = pCurDqLayer->pDec->pMv[0][iMBXY][2][0];
@@ -551,7 +454,7 @@ int32_t GetInterPred (uint8_t* pPredY, uint8_t* pPredCb, uint8_t* pPredCr, PWels
     BaseMC (pCtx, &pMCRefMem, LIST_0, iRefIndex, iMBOffsetX + 8, iMBOffsetY, pMCFunc, 8, 16, iMVs);
 
     if (pCurDqLayer->bUseWeightPredictionFlag) {
-      WeightPrediction (pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 8, 16);
+      WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 8, 16);
     }
     break;
   case MB_TYPE_8x8:
@@ -582,7 +485,7 @@ int32_t GetInterPred (uint8_t* pPredY, uint8_t* pPredCb, uint8_t* pPredCr, PWels
         BaseMC (pCtx, &pMCRefMem, LIST_0, iRefIndex, iXOffset, iYOffset, pMCFunc, 8, 8, iMVs);
         if (pCurDqLayer->bUseWeightPredictionFlag) {
 
-          WeightPrediction (pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 8, 8);
+          WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 8, 8);
         }
 
         break;
@@ -592,7 +495,7 @@ int32_t GetInterPred (uint8_t* pPredY, uint8_t* pPredCb, uint8_t* pPredCr, PWels
         BaseMC (pCtx, &pMCRefMem, LIST_0, iRefIndex, iXOffset, iYOffset, pMCFunc, 8, 4, iMVs);
         if (pCurDqLayer->bUseWeightPredictionFlag) {
 
-          WeightPrediction (pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 8, 4);
+          WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 8, 4);
         }
 
 
@@ -604,7 +507,7 @@ int32_t GetInterPred (uint8_t* pPredY, uint8_t* pPredCb, uint8_t* pPredCr, PWels
         BaseMC (pCtx, &pMCRefMem, LIST_0, iRefIndex, iXOffset, iYOffset + 4, pMCFunc, 8, 4, iMVs);
         if (pCurDqLayer->bUseWeightPredictionFlag) {
 
-          WeightPrediction (pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 8, 4);
+          WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 8, 4);
         }
 
         break;
@@ -614,7 +517,7 @@ int32_t GetInterPred (uint8_t* pPredY, uint8_t* pPredCb, uint8_t* pPredCr, PWels
         BaseMC (pCtx, &pMCRefMem, LIST_0, iRefIndex, iXOffset, iYOffset, pMCFunc, 4, 8, iMVs);
         if (pCurDqLayer->bUseWeightPredictionFlag) {
 
-          WeightPrediction (pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 4, 8);
+          WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 4, 8);
         }
 
 
@@ -626,7 +529,7 @@ int32_t GetInterPred (uint8_t* pPredY, uint8_t* pPredCb, uint8_t* pPredCr, PWels
         BaseMC (pCtx, &pMCRefMem, LIST_0, iRefIndex, iXOffset + 4, iYOffset, pMCFunc, 4, 8, iMVs);
         if (pCurDqLayer->bUseWeightPredictionFlag) {
 
-          WeightPrediction (pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 4, 8);
+          WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 4, 8);
         }
 
         break;
@@ -648,7 +551,7 @@ int32_t GetInterPred (uint8_t* pPredY, uint8_t* pPredCb, uint8_t* pPredCr, PWels
           BaseMC (pCtx, &pMCRefMem, LIST_0, iRefIndex, iXOffset + iBlk4X, iYOffset + iBlk4Y, pMCFunc, 4, 4, iMVs);
           if (pCurDqLayer->bUseWeightPredictionFlag) {
 
-            WeightPrediction (pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 4, 4);
+            WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, LIST_0, iRefIndex, 4, 4);
           }
 
         }
@@ -722,9 +625,9 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
       WELS_B_MB_REC_VERIFY (GetRefPic (&pTempMCRefMem, pCtx, iRefIndex1, LIST_1));
       BaseMC (pCtx, &pTempMCRefMem, LIST_1, iRefIndex1, iMBOffsetX, iMBOffsetY, pMCFunc, 16, 16, iMVs);
       if (pCurDqLayer->bUseWeightedBiPredIdc) {
-        BiWeightPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 16, 16);
+        BiWeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 16, 16);
       } else {
-        BiPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem,  16, 16);
+        BiPrediction (pMCFunc, &pMCRefMem, &pTempMCRefMem, 16, 16);
       }
     } else {
       int32_t listIdx = (iMBType & MB_TYPE_P0L0) ? LIST_0 : LIST_1;
@@ -734,7 +637,7 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
       WELS_B_MB_REC_VERIFY (GetRefPic (&pMCRefMem, pCtx, iRefIndex, listIdx));
       BaseMC (pCtx, &pMCRefMem, listIdx, iRefIndex, iMBOffsetX, iMBOffsetY, pMCFunc, 16, 16, iMVs);
       if (bWeightedBipredIdcIs1) {
-        WeightPrediction (pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 16, 16);
+        WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 16, 16);
       }
     }
   } else if (IS_INTER_16x8 (iMBType)) {
@@ -769,15 +672,15 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
         iRefIndex0 = pCurDqLayer->pDec->pRefIndex[LIST_0][iMBXY][iPartIdx];
         iRefIndex1 = pCurDqLayer->pDec->pRefIndex[LIST_1][iMBXY][iPartIdx];
         if (pCurDqLayer->bUseWeightedBiPredIdc) {
-          BiWeightPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1,
+          BiWeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1,
                               bWeightedBipredIdcIs1, 16, 8);
         } else {
-          BiPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, 16, 8);
+          BiPrediction (pMCFunc, &pMCRefMem, &pTempMCRefMem, 16, 8);
         }
       } else if (listCount == 1) {
         if (bWeightedBipredIdcIs1) {
           iRefIndex = pCurDqLayer->pDec->pRefIndex[lastListIdx][iMBXY][iPartIdx];
-          WeightPrediction (pCurDqLayer, &pMCRefMem, lastListIdx, iRefIndex, 16, 8);
+          WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, lastListIdx, iRefIndex, 16, 8);
         }
       }
     }
@@ -812,15 +715,15 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
         iRefIndex0 = pCurDqLayer->pDec->pRefIndex[LIST_0][iMBXY][i << 1];
         iRefIndex1 = pCurDqLayer->pDec->pRefIndex[LIST_1][iMBXY][i << 1];
         if (pCurDqLayer->bUseWeightedBiPredIdc) {
-          BiWeightPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1,
+          BiWeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1,
                               bWeightedBipredIdcIs1, 8, 16);
         } else {
-          BiPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, 8, 16);
+          BiPrediction (pMCFunc, &pMCRefMem, &pTempMCRefMem, 8, 16);
         }
       } else if (listCount == 1) {
         if (bWeightedBipredIdcIs1) {
           iRefIndex = pCurDqLayer->pDec->pRefIndex[lastListIdx][iMBXY][i << 1];
-          WeightPrediction (pCurDqLayer, &pMCRefMem, lastListIdx, iRefIndex, 8, 16);
+          WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, lastListIdx, iRefIndex, 8, 16);
         }
       }
     }
@@ -878,9 +781,9 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
           BaseMC (pCtx, &pTempMCRefMem, LIST_1, iRefIndex1, iXOffset, iYOffset, pMCFunc, 8, 8, iMVs);
 
           if (pCurDqLayer->bUseWeightedBiPredIdc) {
-            BiWeightPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 8, 8);
+            BiWeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 8, 8);
           } else {
-            BiPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem,  8, 8);
+            BiPrediction (pMCFunc, &pMCRefMem, &pTempMCRefMem, 8, 8);
           }
         } else {
           int32_t listIdx = IS_TYPE_L0 (iSubMBType) ? LIST_0 : LIST_1;
@@ -889,7 +792,7 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
           iRefIndex = pCurDqLayer->pDec->pRefIndex[listIdx][iMBXY][iIIdx];
           BaseMC (pCtx, &pMCRefMem, listIdx, iRefIndex, iXOffset, iYOffset, pMCFunc, 8, 8, iMVs);
           if (bWeightedBipredIdcIs1) {
-            WeightPrediction (pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 8, 8);
+            WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 8, 8);
           }
         }
       } else if (IS_SUB_8x4 (iSubMBType)) {
@@ -902,9 +805,9 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
           BaseMC (pCtx, &pTempMCRefMem, LIST_1, iRefIndex1, iXOffset, iYOffset, pMCFunc, 8, 4, iMVs);
 
           if (pCurDqLayer->bUseWeightedBiPredIdc) {
-            BiWeightPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 8, 4);
+            BiWeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 8, 4);
           } else {
-            BiPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem,  8, 4);
+            BiPrediction (pMCFunc, &pMCRefMem, &pTempMCRefMem, 8, 4);
           }
 
           pMCRefMem.pDstY += (iDstLineLuma << 2);
@@ -922,9 +825,9 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
           BaseMC (pCtx, &pTempMCRefMem, LIST_1, iRefIndex1, iXOffset, iYOffset + 4, pMCFunc, 8, 4, iMVs);
 
           if (pCurDqLayer->bUseWeightedBiPredIdc) {
-            BiWeightPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 8, 4);
+            BiWeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 8, 4);
           } else {
-            BiPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem,  8, 4);
+            BiPrediction (pMCFunc, &pMCRefMem, &pTempMCRefMem, 8, 4);
           }
         } else { //B_L0_8x4 B_L1_8x4
           int32_t listIdx = IS_TYPE_L0 (iSubMBType) ? LIST_0 : LIST_1;
@@ -939,7 +842,7 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
           iMVs[1] = pCurDqLayer->pDec->pMv[listIdx][iMBXY][iIIdx + 4][1];
           BaseMC (pCtx, &pMCRefMem, listIdx, iRefIndex, iXOffset, iYOffset + 4, pMCFunc, 8, 4, iMVs);
           if (bWeightedBipredIdcIs1) {
-            WeightPrediction (pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 8, 4);
+            WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 8, 4);
           }
         }
       } else if (IS_SUB_4x8 (iSubMBType)) {
@@ -952,9 +855,9 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
           BaseMC (pCtx, &pTempMCRefMem, LIST_1, iRefIndex1, iXOffset, iYOffset, pMCFunc, 4, 8, iMVs);
 
           if (pCurDqLayer->bUseWeightedBiPredIdc) {
-            BiWeightPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 4, 8);
+            BiWeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 4, 8);
           } else {
-            BiPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem,  4, 8);
+            BiPrediction (pMCFunc, &pMCRefMem, &pTempMCRefMem, 4, 8);
           }
 
           pMCRefMem.pDstY += 4;
@@ -972,9 +875,9 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
           BaseMC (pCtx, &pTempMCRefMem, LIST_1, iRefIndex1, iXOffset + 4, iYOffset, pMCFunc, 4, 8, iMVs);
 
           if (pCurDqLayer->bUseWeightedBiPredIdc) {
-            BiWeightPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 4, 8);
+            BiWeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 4, 8);
           } else {
-            BiPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, 4, 8);
+            BiPrediction (pMCFunc, &pMCRefMem, &pTempMCRefMem, 4, 8);
           }
         } else { //B_L0_4x8 B_L1_4x8
           int32_t listIdx = IS_TYPE_L0 (iSubMBType) ? LIST_0 : LIST_1;
@@ -989,7 +892,7 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
           iMVs[1] = pCurDqLayer->pDec->pMv[listIdx][iMBXY][iIIdx + 1][1];
           BaseMC (pCtx, &pMCRefMem, listIdx, iRefIndex, iXOffset + 4, iYOffset, pMCFunc, 4, 8, iMVs);
           if (bWeightedBipredIdcIs1) {
-            WeightPrediction (pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 4, 8);
+            WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 4, 8);
           }
         }
       } else if (IS_SUB_4x4 (iSubMBType)) {
@@ -1019,9 +922,9 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
             BaseMC (pCtx, &pTempMCRefMem, LIST_1, iRefIndex1, iXOffset + iBlk4X, iYOffset + iBlk4Y, pMCFunc, 4, 4, iMVs);
 
             if (pCurDqLayer->bUseWeightedBiPredIdc) {
-              BiWeightPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 4, 4);
+              BiWeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, &pTempMCRefMem, iRefIndex0, iRefIndex1, bWeightedBipredIdcIs1, 4, 4);
             } else {
-              BiPrediction (pCurDqLayer, &pMCRefMem, &pTempMCRefMem,  4, 4);
+              BiPrediction (pMCFunc, &pMCRefMem, &pTempMCRefMem, 4, 4);
             }
           }
         } else {
@@ -1043,7 +946,7 @@ int32_t GetInterBPred (uint8_t* pPredYCbCr[3], uint8_t* pTempPredYCbCr[3], PWels
             iMVs[1] = pCurDqLayer->pDec->pMv[listIdx][iMBXY][iIIdx + iJIdx][1];
             BaseMC (pCtx, &pMCRefMem, listIdx, iRefIndex, iXOffset + iBlk4X, iYOffset + iBlk4Y, pMCFunc, 4, 4, iMVs);
             if (bWeightedBipredIdcIs1) {
-              WeightPrediction (pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 4, 4);
+              WeightPrediction (pMCFunc, pCurDqLayer, &pMCRefMem, listIdx, iRefIndex, 4, 4);
             }
           }
         }

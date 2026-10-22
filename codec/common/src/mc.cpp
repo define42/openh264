@@ -171,6 +171,36 @@ static inline void PixelAvg_c (uint8_t* pDst, int32_t iDstStride, const uint8_t*
     pSrcB += iSrcBStride;
   }
 }
+static void WeightedPred_c (uint8_t* pDst, int32_t iDstStride, int32_t iWidth, int32_t iHeight, int32_t iLog2Denom,
+                            int32_t iWeight, int32_t iOffset) {
+  const int32_t kiRound = iLog2Denom >= 1 ? 1 << (iLog2Denom - 1) : 0;
+  for (int32_t i = 0; i < iHeight; i++) {
+    for (int32_t j = 0; j < iWidth; j++) {
+      const int32_t kiPred = ((pDst[j] * iWeight + kiRound) >> iLog2Denom) + iOffset;
+      pDst[j] = WELS_CLIP3 (kiPred, 0, 255);
+    }
+    pDst += iDstStride;
+  }
+}
+
+static void BiWeightedPred_c (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrc, int32_t iSrcStride,
+                              int32_t iWidth, int32_t iHeight, int32_t iLog2Denom, int32_t iWeight0, int32_t iWeight1,
+                              int32_t iOffset) {
+  for (int32_t i = 0; i < iHeight; i++) {
+    for (int32_t j = 0; j < iWidth; j++) {
+      const int32_t kiPred = ((pDst[j] * iWeight0 + pSrc[j] * iWeight1 + (1 << iLog2Denom)) >> (iLog2Denom + 1)) + iOffset;
+      pDst[j] = WELS_CLIP3 (kiPred, 0, 255);
+    }
+    pDst += iDstStride;
+    pSrc += iSrcStride;
+  }
+}
+
+static void BiPred_c (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrc, int32_t iSrcStride, int32_t iWidth,
+                      int32_t iHeight) {
+  PixelAvg_c (pDst, iDstStride, pDst, iDstStride, pSrc, iSrcStride, iWidth, iHeight);
+}
+
 static inline void McCopy_c (const uint8_t* pSrc, int32_t iSrcStride, uint8_t* pDst, int32_t iDstStride, int32_t iWidth,
                              int32_t iHeight) {
   if (iWidth == 16)
@@ -1076,6 +1106,61 @@ void PixelAvg_sse2 (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrcA, int
     PixelAvgWidthEq16_sse2
   };
   kpfFuncs[iWidth >> 4] (pDst, iDstStride, pSrcA, iSrcAStride, pSrcB, iSrcBStride, iHeight);
+}
+
+// The SSE2 kernels are exact for the parameter ranges allowed by the standard (and enforced when parsing the
+// prediction weight table); anything else goes to the C version.
+static inline bool WeightedPredParamsInRange (int32_t iLog2Denom, int32_t iWeight, int32_t iOffset) {
+  return iLog2Denom >= 0 && iLog2Denom <= 7 && iWeight >= -128 && iWeight <= 128 && iOffset >= -128 && iOffset <= 127;
+}
+
+void WeightedPred_sse2 (uint8_t* pDst, int32_t iDstStride, int32_t iWidth, int32_t iHeight, int32_t iLog2Denom,
+                        int32_t iWeight, int32_t iOffset) {
+  if (iHeight > 0 && WeightedPredParamsInRange (iLog2Denom, iWeight, iOffset)) {
+    if (iWidth == 16) {
+      WeightedPredWidthEq16_sse2 (pDst, iDstStride, iHeight, iLog2Denom, iWeight, iOffset);
+      return;
+    } else if (iWidth == 8) {
+      WeightedPredWidthEq8_sse2 (pDst, iDstStride, iHeight, iLog2Denom, iWeight, iOffset);
+      return;
+    } else if (iWidth == 4) {
+      WeightedPredWidthEq4_sse2 (pDst, iDstStride, iHeight, iLog2Denom, iWeight, iOffset);
+      return;
+    }
+  }
+  WeightedPred_c (pDst, iDstStride, iWidth, iHeight, iLog2Denom, iWeight, iOffset);
+}
+
+void BiWeightedPred_sse2 (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrc, int32_t iSrcStride, int32_t iWidth,
+                          int32_t iHeight, int32_t iLog2Denom, int32_t iWeight0, int32_t iWeight1, int32_t iOffset) {
+  if (iHeight > 0 && WeightedPredParamsInRange (iLog2Denom, iWeight0, iOffset)
+      && WeightedPredParamsInRange (iLog2Denom, iWeight1, iOffset)) {
+    const int32_t kiWeights = (int32_t) ((uint32_t) (iWeight0 & 0xffff) | ((uint32_t) (iWeight1 & 0xffff) << 16));
+    if (iWidth == 16) {
+      BiWeightedPredWidthEq16_sse2 (pDst, iDstStride, pSrc, iSrcStride, iHeight, iLog2Denom + 1, kiWeights, iOffset);
+      return;
+    } else if (iWidth == 8) {
+      BiWeightedPredWidthEq8_sse2 (pDst, iDstStride, pSrc, iSrcStride, iHeight, iLog2Denom + 1, kiWeights, iOffset);
+      return;
+    } else if (iWidth == 4) {
+      BiWeightedPredWidthEq4_sse2 (pDst, iDstStride, pSrc, iSrcStride, iHeight, iLog2Denom + 1, kiWeights, iOffset);
+      return;
+    }
+  }
+  BiWeightedPred_c (pDst, iDstStride, pSrc, iSrcStride, iWidth, iHeight, iLog2Denom, iWeight0, iWeight1, iOffset);
+}
+
+void BiPred_sse2 (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrc, int32_t iSrcStride, int32_t iWidth,
+                  int32_t iHeight) {
+  if (iWidth == 16 && iHeight > 0 && (iHeight & 3) == 0) {
+    PixelAvgWidthEq16_sse2 (pDst, iDstStride, pDst, iDstStride, pSrc, iSrcStride, iHeight);
+  } else if (iWidth == 8 && iHeight > 0 && (iHeight & 1) == 0) {
+    PixelAvgWidthEq8_sse2 (pDst, iDstStride, pDst, iDstStride, pSrc, iSrcStride, iHeight);
+  } else if (iWidth == 4 && iHeight > 0) {
+    PixelAvgWidthEq4_sse2 (pDst, iDstStride, pDst, iDstStride, pSrc, iSrcStride, iHeight);
+  } else {
+    BiPred_c (pDst, iDstStride, pSrc, iSrcStride, iWidth, iHeight);
+  }
 }
 
 #endif //X86_ASM
@@ -4532,6 +4617,9 @@ void WelsCommon::InitMcFunc (SMcFunc* pMcFuncs, uint32_t uiCpuFlag) {
   pMcFuncs->pfSampleAveraging = PixelAvg_c;
   pMcFuncs->pMcChromaFunc     = McChroma_c;
   pMcFuncs->pMcLumaFunc       = McLuma_c;
+  pMcFuncs->pfWeightedPred    = WeightedPred_c;
+  pMcFuncs->pfBiWeightedPred  = BiWeightedPred_c;
+  pMcFuncs->pfBiPred          = BiPred_c;
 
 #if defined (X86_ASM)
   if (uiCpuFlag & WELS_CPU_SSE2) {
@@ -4541,6 +4629,9 @@ void WelsCommon::InitMcFunc (SMcFunc* pMcFuncs, uint32_t uiCpuFlag) {
     pMcFuncs->pfSampleAveraging = PixelAvg_sse2;
     pMcFuncs->pMcChromaFunc     = McChroma_sse2;
     pMcFuncs->pMcLumaFunc       = McLuma_sse2;
+    pMcFuncs->pfWeightedPred    = WeightedPred_sse2;
+    pMcFuncs->pfBiWeightedPred  = BiWeightedPred_sse2;
+    pMcFuncs->pfBiPred          = BiPred_sse2;
   }
 
   if (uiCpuFlag & WELS_CPU_SSSE3) {
