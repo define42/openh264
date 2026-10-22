@@ -782,9 +782,11 @@ TEST_F (SadSatdAssemblyFuncTest, func##_exact) { \
   } \
 }
 
+#ifdef X86_ASM
 #ifdef HAVE_AVX2
 GENERATE_SadFourExact_UT (WelsSampleSadFour16x8_avx2, WelsSampleSadFour16x8_c, WELS_CPU_AVX2)
 GENERATE_SadFourExact_UT (WelsSampleSadFour16x16_avx2, WelsSampleSadFour16x16_c, WELS_CPU_AVX2)
+#endif //HAVE_AVX2
 #endif
 
 #ifdef HAVE_NEON
