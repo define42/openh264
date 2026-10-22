@@ -1464,7 +1464,10 @@ int CWelsDecoder::ThreadDecodeFrameInternal (const unsigned char* kpSrc, const i
   }
   m_pDecThrCtx[signal].kpSrc = const_cast<uint8_t*> (kpSrc);
   m_pDecThrCtx[signal].kiSrcLen = kiSrcLen;
-  m_pDecThrCtx[signal].ppDst = ppDst;
+  // Decoded pictures reach the caller through the reorder queue (Release*), which
+  // fills ppDst on this thread; the worker only needs scratch plane pointers.
+  memset (m_pDecThrCtx[signal].pDstPlanes, 0, sizeof (m_pDecThrCtx[signal].pDstPlanes));
+  m_pDecThrCtx[signal].ppDst = m_pDecThrCtx[signal].pDstPlanes;
   memcpy (&m_pDecThrCtx[signal].sDstInfo, pDstInfo, sizeof (SBufferInfo));
 
   state = ParseAccessUnit (m_pDecThrCtx[signal]);

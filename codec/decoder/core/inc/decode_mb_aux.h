@@ -48,6 +48,7 @@ extern "C" {
 #if defined(X86_ASM)
 void IdctResAddPred_mmx (uint8_t* pPred, const int32_t kiStride, int16_t* pRs);
 void IdctResAddPred_sse2 (uint8_t* pPred, const int32_t kiStride, int16_t* pRs);
+void IdctResAddPred8x8_sse2 (uint8_t* pPred, const int32_t kiStride, int16_t* pRs);
 #if defined(HAVE_AVX2)
 void IdctResAddPred_avx2 (uint8_t* pPred, const int32_t kiStride, int16_t* pRs);
 void IdctFourResAddPred_avx2 (uint8_t* pPred, int32_t iStride, int16_t* pRs, const int8_t* pNzc);

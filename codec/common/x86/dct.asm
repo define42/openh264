@@ -1034,3 +1034,193 @@ WELS_EXTERN WelsIDctT4Rec_avx2
     ret
 %endif
 
+
+;***********************************************************************
+; 8x8 inverse transform helpers. All buffers are 8 rows of 8 int16 with a
+; row pitch of 16 bytes. Only xmm0-xmm5 are used.
+;***********************************************************************
+
+; Transpose four 8-word rows held as [rows 0-3 | rows 4-7] quadword pairs
+; in xmm0-xmm3 and store the four resulting rows to %1.
+%macro SSE2_Transpose4RowPairsStore 1
+    movdqa      xmm4, xmm0
+    punpcklwd   xmm0, xmm1
+    punpckhwd   xmm4, xmm1
+    movdqa      xmm1, xmm2
+    punpcklwd   xmm2, xmm3
+    punpckhwd   xmm1, xmm3
+    movdqa      xmm3, xmm0
+    punpckldq   xmm0, xmm2
+    punpckhdq   xmm3, xmm2
+    movdqa      xmm2, xmm4
+    punpckldq   xmm4, xmm1
+    punpckhdq   xmm2, xmm1
+    movdqa      xmm1, xmm0
+    punpcklqdq  xmm0, xmm4
+    punpckhqdq  xmm1, xmm4
+    movdqa      xmm4, xmm3
+    punpcklqdq  xmm3, xmm2
+    punpckhqdq  xmm4, xmm2
+    movdqa      [%1 + 0x00], xmm0
+    movdqa      [%1 + 0x10], xmm1
+    movdqa      [%1 + 0x20], xmm3
+    movdqa      [%1 + 0x30], xmm4
+%endmacro
+
+; Transpose the 8x8 int16 matrix at %2 (unaligned) into %1 (16-byte aligned).
+%macro SSE2_Transpose8x8WMem 2
+    movq        xmm0, [%2 + 0x00]
+    movhps      xmm0, [%2 + 0x40]
+    movq        xmm1, [%2 + 0x10]
+    movhps      xmm1, [%2 + 0x50]
+    movq        xmm2, [%2 + 0x20]
+    movhps      xmm2, [%2 + 0x60]
+    movq        xmm3, [%2 + 0x30]
+    movhps      xmm3, [%2 + 0x70]
+    SSE2_Transpose4RowPairsStore %1
+    movq        xmm0, [%2 + 0x08]
+    movhps      xmm0, [%2 + 0x48]
+    movq        xmm1, [%2 + 0x18]
+    movhps      xmm1, [%2 + 0x58]
+    movq        xmm2, [%2 + 0x28]
+    movhps      xmm2, [%2 + 0x68]
+    movq        xmm3, [%2 + 0x38]
+    movhps      xmm3, [%2 + 0x78]
+    SSE2_Transpose4RowPairsStore %1 + 0x40
+%endmacro
+
+; One 8-point 1-D inverse transform applied lane-wise.
+; %1 = output rows, %2 = input rows p0..p7, %3 = 64-byte scratch.
+; %1 must not overlap %2.
+%macro SSE2_Idct8x8_1D 3
+    ; even part
+    movdqa      xmm0, [%2 + 0x00]
+    movdqa      xmm1, xmm0
+    paddw       xmm0, [%2 + 0x40]       ; a0 = p0 + p4
+    psubw       xmm1, [%2 + 0x40]       ; a1 = p0 - p4
+    movdqa      xmm2, [%2 + 0x20]
+    movdqa      xmm3, [%2 + 0x60]
+    movdqa      xmm4, xmm2
+    psraw       xmm4, 1
+    movdqa      xmm5, xmm3
+    psraw       xmm5, 1
+    psubw       xmm3, xmm4              ; a2 = p6 - (p2 >> 1)
+    paddw       xmm2, xmm5              ; a3 = p2 + (p6 >> 1)
+    movdqa      xmm4, xmm0
+    paddw       xmm0, xmm2              ; b0 = a0 + a3
+    psubw       xmm4, xmm2              ; b6 = a0 - a3
+    movdqa      xmm5, xmm1
+    psubw       xmm1, xmm3              ; b2 = a1 - a2
+    paddw       xmm5, xmm3              ; b4 = a1 + a2
+    movdqa      [%3 + 0x00], xmm0
+    movdqa      [%3 + 0x10], xmm1
+    movdqa      [%3 + 0x20], xmm5
+    movdqa      [%3 + 0x30], xmm4
+    ; odd part
+    movdqa      xmm0, [%2 + 0x10]       ; p1
+    movdqa      xmm1, [%2 + 0x30]       ; p3
+    movdqa      xmm2, [%2 + 0x50]       ; p5
+    movdqa      xmm3, [%2 + 0x70]       ; p7
+    movdqa      xmm4, xmm1
+    psraw       xmm4, 1
+    paddw       xmm4, xmm1
+    movdqa      xmm5, xmm0
+    paddw       xmm5, xmm3
+    psubw       xmm5, xmm4              ; c1 = p1 + p7 - p3 - (p3 >> 1)
+    movdqa      xmm4, xmm2
+    psraw       xmm4, 1
+    paddw       xmm4, xmm2
+    paddw       xmm4, xmm3
+    psubw       xmm4, xmm0              ; c2 = -p1 + p7 + p5 + (p5 >> 1)
+    movdqa      xmm0, xmm4
+    psraw       xmm0, 2
+    paddw       xmm0, xmm5              ; b3 = c1 + (c2 >> 2)
+    psraw       xmm5, 2
+    psubw       xmm4, xmm5              ; b5 = c2 - (c1 >> 2)
+    movdqa      xmm5, [%3 + 0x20]
+    paddw       xmm5, xmm0
+    movdqa      [%1 + 0x20], xmm5       ; b4 + b3
+    movdqa      xmm5, [%3 + 0x20]
+    psubw       xmm5, xmm0
+    movdqa      [%1 + 0x50], xmm5       ; b4 - b3
+    movdqa      xmm5, [%3 + 0x10]
+    psubw       xmm5, xmm4
+    movdqa      [%1 + 0x10], xmm5       ; b2 - b5
+    movdqa      xmm5, [%3 + 0x10]
+    paddw       xmm5, xmm4
+    movdqa      [%1 + 0x60], xmm5       ; b2 + b5
+    movdqa      xmm0, xmm2
+    psubw       xmm0, xmm1
+    psubw       xmm0, xmm3
+    psraw       xmm3, 1
+    psubw       xmm0, xmm3              ; c0 = -p3 + p5 - p7 - (p7 >> 1)
+    movdqa      xmm4, [%2 + 0x10]
+    movdqa      xmm5, xmm4
+    psraw       xmm5, 1
+    paddw       xmm4, xmm5
+    paddw       xmm4, xmm1
+    paddw       xmm4, xmm2              ; c3 = p3 + p5 + p1 + (p1 >> 1)
+    movdqa      xmm1, xmm4
+    psraw       xmm1, 2
+    paddw       xmm1, xmm0              ; b1 = c0 + (c3 >> 2)
+    psraw       xmm0, 2
+    psubw       xmm4, xmm0              ; b7 = c3 - (c0 >> 2)
+    movdqa      xmm5, [%3 + 0x00]
+    movdqa      xmm2, xmm5
+    paddw       xmm5, xmm4
+    movdqa      [%1 + 0x00], xmm5       ; b0 + b7
+    psubw       xmm2, xmm4
+    movdqa      [%1 + 0x70], xmm2       ; b0 - b7
+    movdqa      xmm5, [%3 + 0x30]
+    movdqa      xmm2, xmm5
+    paddw       xmm5, xmm1
+    movdqa      [%1 + 0x30], xmm5       ; b6 + b1
+    psubw       xmm2, xmm1
+    movdqa      [%1 + 0x40], xmm2       ; b6 - b1
+%endmacro
+
+;***********************************************************************
+; void IdctResAddPred8x8_sse2(uint8_t* pPred, const int32_t kiStride, int16_t* pRs);
+;***********************************************************************
+WELS_EXTERN IdctResAddPred8x8_sse2
+    %assign push_num 0
+    LOAD_3_PARA
+    SIGN_EXTENSION r1, r1d
+%ifdef X86_32
+    push        r3
+    %assign push_num 1
+%endif
+    mov         r3, r7
+    and         r7, -16
+    sub         r7, 0x140               ; 0x00 rows, 0x80 output rows, 0x100 scratch
+
+    SSE2_Transpose8x8WMem r7, r2
+    SSE2_Idct8x8_1D       r7 + 0x80, r7, r7 + 0x100
+    SSE2_Transpose8x8WMem r7, r7 + 0x80
+    SSE2_Idct8x8_1D       r7 + 0x80, r7, r7 + 0x100
+
+    pxor        xmm4, xmm4
+    pcmpeqw     xmm5, xmm5
+    psrlw       xmm5, 15
+    psllw       xmm5, 5                 ; 32
+%assign i 0
+%rep 8
+    movdqa      xmm0, [r7 + 0x80 + i * 0x10]
+    paddsw      xmm0, xmm5              ; saturation does not change the clipped result
+    psraw       xmm0, 6
+    movq        xmm1, [r0]
+    punpcklbw   xmm1, xmm4
+    paddw       xmm0, xmm1
+    packuswb    xmm0, xmm0
+    movq        [r0], xmm0
+%if i < 7
+    add         r0, r1
+%endif
+%assign i i+1
+%endrep
+
+    mov         r7, r3
+%ifdef X86_32
+    pop         r3
+%endif
+    ret

@@ -399,3 +399,161 @@ DEF_HALFPEL_MCTESTS(WELS_CPU_SSE2 | WELS_CPU_SSSE3, ssse3)
 DEF_HALFPEL_MCTESTS(WELS_CPU_SSE2 | WELS_CPU_SSSE3 | WELS_CPU_AVX2, avx2)
 #endif
 #endif
+
+#define WP_BUFF_HEIGHT 20
+#define WP_BUFF_DST_STRIDE 40
+#define WP_BUFF_SRC_STRIDE 24
+
+// Reference formulas from 8.4.2.3 (as previously open coded in the decoder's rec_mb.cpp)
+static void WeightedPredAnchor (uint8_t* pDst, int32_t iStride, int32_t iWidth, int32_t iHeight, int32_t iLog2Denom,
+                                int32_t iWeight, int32_t iOffset) {
+  for (int32_t i = 0; i < iHeight; i++) {
+    for (int32_t j = 0; j < iWidth; j++) {
+      int32_t iPred;
+      if (iLog2Denom >= 1)
+        iPred = ((pDst[i * iStride + j] * iWeight + (1 << (iLog2Denom - 1))) >> iLog2Denom) + iOffset;
+      else
+        iPred = pDst[i * iStride + j] * iWeight + iOffset;
+      pDst[i * iStride + j] = WELS_CLIP3 (iPred, 0, 255);
+    }
+  }
+}
+
+static void BiWeightedPredAnchor (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrc, int32_t iSrcStride,
+                                  int32_t iWidth, int32_t iHeight, int32_t iLog2Denom, int32_t iWeight0, int32_t iWeight1,
+                                  int32_t iOffset0, int32_t iOffset1) {
+  for (int32_t i = 0; i < iHeight; i++) {
+    for (int32_t j = 0; j < iWidth; j++) {
+      const int32_t iPred = ((pDst[i * iDstStride + j] * iWeight0 + pSrc[i * iSrcStride + j] * iWeight1 + (1 << iLog2Denom))
+                             >> (iLog2Denom + 1)) + ((iOffset0 + iOffset1 + 1) >> 1);
+      pDst[i * iDstStride + j] = WELS_CLIP3 (iPred, 0, 255);
+    }
+  }
+}
+
+static void BiPredAnchor (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrc, int32_t iSrcStride, int32_t iWidth,
+                          int32_t iHeight) {
+  for (int32_t i = 0; i < iHeight; i++)
+    for (int32_t j = 0; j < iWidth; j++)
+      pDst[i * iDstStride + j] = (pDst[i * iDstStride + j] + pSrc[i * iSrcStride + j] + 1) >> 1;
+}
+
+// Mostly parameters within the ranges allowed by the standard (including the extremes), sometimes outside of them
+static void RandWeightParams (int32_t iIter, int32_t& iLog2Denom, int32_t& iWeight, int32_t& iOffset) {
+  switch (iIter & 7) {
+  case 0:
+    iLog2Denom = 0;
+    iWeight = (rand() & 1) ? 128 : -128;
+    iOffset = (rand() & 1) ? 127 : -128;
+    break;
+  case 1:
+    iLog2Denom = 7;
+    iWeight = (rand() & 1) ? 128 : -128;
+    iOffset = (rand() & 1) ? 127 : -128;
+    break;
+  case 2:
+    iLog2Denom = rand() % 8;
+    iWeight = 1 << iLog2Denom;
+    iOffset = 0;
+    break;
+  case 3:
+    iLog2Denom = rand() % 8;
+    iWeight = rand() % 1024 - 512;
+    iOffset = rand() % 1024 - 512;
+    break;
+  default:
+    iLog2Denom = rand() % 8;
+    iWeight = rand() % 257 - 128;
+    iOffset = rand() % 256 - 128;
+    break;
+  }
+}
+
+static const int32_t kiWpSizes[][2] = {{16, 16}, {16, 8}, {8, 16}, {8, 8}, {8, 4}, {4, 8}, {4, 4}, {4, 2}, {2, 4}, {2, 2}};
+
+#define DEF_WEIGHTED_PRED_TEST(cpu_flags, name_suffix) \
+TEST (McWeightedPred, name_suffix) { \
+  SMcFunc sMcFunc; \
+  InitMcFunc (&sMcFunc, WelsCPUFeatureDetect (0) & (cpu_flags)); \
+  uint8_t uDstAnchor[WP_BUFF_HEIGHT][WP_BUFF_DST_STRIDE]; \
+  uint8_t uDstTest[WP_BUFF_HEIGHT][WP_BUFF_DST_STRIDE]; \
+  for (size_t k = 0; k < sizeof (kiWpSizes) / sizeof (kiWpSizes[0]); k++) { \
+    const int32_t iW = kiWpSizes[k][0], iH = kiWpSizes[k][1]; \
+    for (int32_t iIter = 0; iIter < 64; iIter++) { \
+      int32_t iLog2Denom, iWeight, iOffset; \
+      RandWeightParams (iIter, iLog2Denom, iWeight, iOffset); \
+      for (int32_t j = 0; j < WP_BUFF_HEIGHT; j++) \
+        for (int32_t i = 0; i < WP_BUFF_DST_STRIDE; i++) \
+          uDstAnchor[j][i] = uDstTest[j][i] = (iIter & 8) ? ((rand() & 1) ? 255 : 0) : rand() % 256; \
+      const int32_t iX = iIter % 5; \
+      WeightedPredAnchor (&uDstAnchor[1][iX], WP_BUFF_DST_STRIDE, iW, iH, iLog2Denom, iWeight, iOffset); \
+      sMcFunc.pfWeightedPred (&uDstTest[1][iX], WP_BUFF_DST_STRIDE, iW, iH, iLog2Denom, iWeight, iOffset); \
+      ASSERT_EQ (0, memcmp (uDstAnchor, uDstTest, sizeof (uDstAnchor))) << iW << "x" << iH << " log2denom " << iLog2Denom \
+          << " weight " << iWeight << " offset " << iOffset; \
+    } \
+  } \
+} \
+TEST (McBiWeightedPred, name_suffix) { \
+  SMcFunc sMcFunc; \
+  InitMcFunc (&sMcFunc, WelsCPUFeatureDetect (0) & (cpu_flags)); \
+  uint8_t uSrc[WP_BUFF_HEIGHT][WP_BUFF_SRC_STRIDE]; \
+  uint8_t uDstAnchor[WP_BUFF_HEIGHT][WP_BUFF_DST_STRIDE]; \
+  uint8_t uDstTest[WP_BUFF_HEIGHT][WP_BUFF_DST_STRIDE]; \
+  for (size_t k = 0; k < sizeof (kiWpSizes) / sizeof (kiWpSizes[0]); k++) { \
+    const int32_t iW = kiWpSizes[k][0], iH = kiWpSizes[k][1]; \
+    for (int32_t iIter = 0; iIter < 96; iIter++) { \
+      int32_t iLog2Denom, iWeight0, iWeight1, iOffset0, iOffset1, iUnused; \
+      if (iIter % 3 == 2) { /* implicit weights */ \
+        iLog2Denom = 5; \
+        iWeight0 = rand() % 193 - 64; \
+        iWeight1 = 64 - iWeight0; \
+        iOffset0 = iOffset1 = 0; \
+      } else { \
+        RandWeightParams (iIter, iLog2Denom, iWeight0, iOffset0); \
+        RandWeightParams (iIter, iUnused, iWeight1, iOffset1); \
+      } \
+      const bool bExtremes = (iIter & 8) != 0; \
+      for (int32_t j = 0; j < WP_BUFF_HEIGHT; j++) { \
+        for (int32_t i = 0; i < WP_BUFF_DST_STRIDE; i++) \
+          uDstAnchor[j][i] = uDstTest[j][i] = bExtremes ? ((rand() & 1) ? 255 : 0) : rand() % 256; \
+        for (int32_t i = 0; i < WP_BUFF_SRC_STRIDE; i++) \
+          uSrc[j][i] = bExtremes ? ((rand() & 1) ? 255 : 0) : rand() % 256; \
+      } \
+      const int32_t iX = iIter % 5; \
+      BiWeightedPredAnchor (&uDstAnchor[1][iX], WP_BUFF_DST_STRIDE, &uSrc[2][iX + 1], WP_BUFF_SRC_STRIDE, iW, iH, \
+                            iLog2Denom, iWeight0, iWeight1, iOffset0, iOffset1); \
+      sMcFunc.pfBiWeightedPred (&uDstTest[1][iX], WP_BUFF_DST_STRIDE, &uSrc[2][iX + 1], WP_BUFF_SRC_STRIDE, iW, iH, \
+                                iLog2Denom, iWeight0, iWeight1, (iOffset0 + iOffset1 + 1) >> 1); \
+      ASSERT_EQ (0, memcmp (uDstAnchor, uDstTest, sizeof (uDstAnchor))) << iW << "x" << iH << " log2denom " << iLog2Denom \
+          << " weights " << iWeight0 << "," << iWeight1 << " offsets " << iOffset0 << "," << iOffset1; \
+    } \
+  } \
+} \
+TEST (McBiPred, name_suffix) { \
+  SMcFunc sMcFunc; \
+  InitMcFunc (&sMcFunc, WelsCPUFeatureDetect (0) & (cpu_flags)); \
+  uint8_t uSrc[WP_BUFF_HEIGHT][WP_BUFF_SRC_STRIDE]; \
+  uint8_t uDstAnchor[WP_BUFF_HEIGHT][WP_BUFF_DST_STRIDE]; \
+  uint8_t uDstTest[WP_BUFF_HEIGHT][WP_BUFF_DST_STRIDE]; \
+  for (size_t k = 0; k < sizeof (kiWpSizes) / sizeof (kiWpSizes[0]); k++) { \
+    const int32_t iW = kiWpSizes[k][0], iH = kiWpSizes[k][1]; \
+    for (int32_t iIter = 0; iIter < 16; iIter++) { \
+      for (int32_t j = 0; j < WP_BUFF_HEIGHT; j++) { \
+        for (int32_t i = 0; i < WP_BUFF_DST_STRIDE; i++) \
+          uDstAnchor[j][i] = uDstTest[j][i] = rand() % 256; \
+        for (int32_t i = 0; i < WP_BUFF_SRC_STRIDE; i++) \
+          uSrc[j][i] = rand() % 256; \
+      } \
+      const int32_t iX = iIter % 5; \
+      BiPredAnchor (&uDstAnchor[1][iX], WP_BUFF_DST_STRIDE, &uSrc[2][iX + 1], WP_BUFF_SRC_STRIDE, iW, iH); \
+      sMcFunc.pfBiPred (&uDstTest[1][iX], WP_BUFF_DST_STRIDE, &uSrc[2][iX + 1], WP_BUFF_SRC_STRIDE, iW, iH); \
+      ASSERT_EQ (0, memcmp (uDstAnchor, uDstTest, sizeof (uDstAnchor))) << iW << "x" << iH; \
+    } \
+  } \
+}
+
+DEF_WEIGHTED_PRED_TEST (0, c)
+DEF_WEIGHTED_PRED_TEST (~0, native)
+#ifdef X86_ASM
+DEF_WEIGHTED_PRED_TEST (WELS_CPU_SSE2, sse2)
+#endif

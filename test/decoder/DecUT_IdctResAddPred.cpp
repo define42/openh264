@@ -338,6 +338,44 @@ TEST(DecoderDecodeMbAux, pred) {\
 
 GENERATE_IDCTRESADDPRED8x8 (IdctResAddPred8x8_c, 0);
 
+#if defined(X86_ASM)
+GENERATE_IDCTRESADDPRED8x8 (IdctResAddPred8x8_sse2, WELS_CPU_SSE2)
+
+TEST (DecoderDecodeMbAux, IdctResAddPred8x8_sse2_extreme) {
+  const int32_t kiStride = 24;
+  ENFORCE_STACK_ALIGN_1D (int16_t, iRS, 64, 16);
+  ENFORCE_STACK_ALIGN_1D (uint8_t, uiPred, 8 * kiStride, 16);
+  int16_t iRefRS[64];
+  uint8_t uiRefPred[8 * kiStride];
+  const int16_t kiExtremes[] = { -32768, -32767, -16384, -1, 0, 1, 16383, 32767 };
+  if ((WelsCPUFeatureDetect (NULL) & WELS_CPU_SSE2) == 0)
+    return;
+  for (int32_t iRun = 0; iRun < 2000; iRun++) {
+    for (int32_t i = 0; i < 64; i++) {
+      int32_t iMode = iRun & 3;
+      int16_t iVal;
+      if (iMode == 0)
+        iVal = kiExtremes[rand() & 7];
+      else if (iMode == 1)
+        iVal = (int16_t) (rand() & 0xffff);
+      else if (iMode == 2)
+        iVal = (rand() & 1) ? kiExtremes[rand() & 7] : (int16_t) ((rand() & 0x3fff) - 0x2000);
+      else
+        iVal = (i == (iRun >> 2) % 64) ? kiExtremes[rand() & 7] : 0;
+      iRefRS[i] = iRS[i] = iVal;
+    }
+    for (int32_t i = 0; i < 8 * kiStride; i++)
+      uiRefPred[i] = uiPred[i] = rand() & 255;
+    IdctResAddPred8x8_sse2 (uiPred, kiStride, iRS);
+    IdctResAddPred8x8_c (uiRefPred, kiStride, iRefRS);
+    for (int32_t i = 0; i < 8 * kiStride; i++)
+      ASSERT_EQ (uiRefPred[i], uiPred[i]) << "run " << iRun << " pos " << i;
+    for (int32_t i = 0; i < 64; i++)
+      ASSERT_EQ (iRefRS[i], iRS[i]);
+  }
+}
+#endif
+
 #if defined(HAVE_LSX)
 GENERATE_IDCTRESADDPRED8x8 (IdctResAddPred8x8_lsx, WELS_CPU_LSX)
 #endif

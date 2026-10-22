@@ -74,6 +74,11 @@ void WelsSampleSadFour8x16_sse2 (uint8_t*, int32_t, uint8_t*, int32_t, int32_t*)
 void WelsSampleSadFour8x8_sse2 (uint8_t*, int32_t, uint8_t*, int32_t, int32_t*);
 void WelsSampleSadFour4x4_sse2 (uint8_t*, int32_t, uint8_t*, int32_t, int32_t*);
 
+#if defined (HAVE_AVX2)
+void WelsSampleSadFour16x16_avx2 (uint8_t*, int32_t, uint8_t*, int32_t, int32_t*);
+void WelsSampleSadFour16x8_avx2 (uint8_t*, int32_t, uint8_t*, int32_t, int32_t*);
+#endif//HAVE_AVX2
+
 #endif//X86_ASM
 
 #if defined (HAVE_NEON)

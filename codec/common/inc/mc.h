@@ -42,6 +42,16 @@ typedef void (*PWelsLumaHalfpelMcFunc) (const uint8_t* pSrc, int32_t iSrcStride,
                                         int32_t iWidth, int32_t iHeight);
 typedef void (*PWelsSampleAveragingFunc) (uint8_t*, int32_t, const uint8_t*, int32_t, const uint8_t*, int32_t,
     int32_t, int32_t);
+// explicit weighted prediction of a iWidth x iHeight block, in place
+typedef void (*PWelsWeightedPredFunc) (uint8_t* pDst, int32_t iDstStride, int32_t iWidth, int32_t iHeight,
+                                       int32_t iLog2Denom, int32_t iWeight, int32_t iOffset);
+// weighted bi-prediction of pDst (list 0) and pSrc (list 1), result written to pDst;
+// iOffset is the already combined offset (o0 + o1 + 1) >> 1
+typedef void (*PWelsBiWeightedPredFunc) (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrc, int32_t iSrcStride,
+    int32_t iWidth, int32_t iHeight, int32_t iLog2Denom, int32_t iWeight0, int32_t iWeight1, int32_t iOffset);
+// default bi-prediction (rounded average) of pDst and pSrc, result written to pDst
+typedef void (*PWelsBiPredFunc) (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrc, int32_t iSrcStride,
+                                 int32_t iWidth, int32_t iHeight);
 
 typedef struct TagMcFunc {
   PWelsLumaHalfpelMcFunc      pfLumaHalfpelHor;
@@ -51,6 +61,11 @@ typedef struct TagMcFunc {
 
   PWelsMcFunc                 pMcLumaFunc;
   PWelsSampleAveragingFunc    pfSampleAveraging;
+
+  // block widths 2, 4, 8 and 16
+  PWelsWeightedPredFunc       pfWeightedPred;
+  PWelsBiWeightedPredFunc     pfBiWeightedPred;
+  PWelsBiPredFunc             pfBiPred;
 } SMcFunc;
 
 namespace WelsCommon {
@@ -289,6 +304,19 @@ void McHorVer22Width8VerLastUnAlign_sse2 (const uint8_t* pTap, int32_t iTapStrid
 
 void PixelAvgWidthEq16_sse2 (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrcA, int32_t iSrcAStride,
                              const uint8_t* pSrcB, int32_t iSrcBStride, int32_t iHeight);
+
+void WeightedPredWidthEq4_sse2 (uint8_t* pDst, int32_t iDstStride, int32_t iHeight, int32_t iLog2Denom,
+                                int32_t iWeight, int32_t iOffset);
+void WeightedPredWidthEq8_sse2 (uint8_t* pDst, int32_t iDstStride, int32_t iHeight, int32_t iLog2Denom,
+                                int32_t iWeight, int32_t iOffset);
+void WeightedPredWidthEq16_sse2 (uint8_t* pDst, int32_t iDstStride, int32_t iHeight, int32_t iLog2Denom,
+                                 int32_t iWeight, int32_t iOffset);
+void BiWeightedPredWidthEq4_sse2 (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrc, int32_t iSrcStride,
+                                  int32_t iHeight, int32_t iShift, int32_t iWeights, int32_t iOffset);
+void BiWeightedPredWidthEq8_sse2 (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrc, int32_t iSrcStride,
+                                  int32_t iHeight, int32_t iShift, int32_t iWeights, int32_t iOffset);
+void BiWeightedPredWidthEq16_sse2 (uint8_t* pDst, int32_t iDstStride, const uint8_t* pSrc, int32_t iSrcStride,
+                                   int32_t iHeight, int32_t iShift, int32_t iWeights, int32_t iOffset);
 
 void McHorVer20Width9Or17_sse2 (const uint8_t* pSrc, int32_t iSrcStride, uint8_t* pDst, int32_t iDstStride,
                                 int32_t iWidth,

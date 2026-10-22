@@ -102,113 +102,12 @@ void RestoreCabacDecEngineToBS (PWelsCabacDecEngine pDecEngine, PBitStringAux pB
 }
 
 // ------------------- 3. actual decoding
-int32_t Read32BitsCabac (PWelsCabacDecEngine pDecEngine, uint32_t& uiValue, int32_t& iNumBitsRead) {
-  intX_t iLeftBytes = pDecEngine->pBuffEnd - pDecEngine->pBuffCurr;
-  iNumBitsRead = 0;
-  uiValue = 0;
-  if (iLeftBytes <= 0) {
-    return GENERATE_ERROR_NO (ERR_LEVEL_MB_DATA, ERR_CABAC_NO_BS_TO_READ);
-  }
-  switch (iLeftBytes) {
-  case 3:
-    uiValue = ((pDecEngine->pBuffCurr[0]) << 16 | (pDecEngine->pBuffCurr[1]) << 8 | (pDecEngine->pBuffCurr[2]));
-    pDecEngine->pBuffCurr += 3;
-    iNumBitsRead = 24;
-    break;
-  case 2:
-    uiValue = ((pDecEngine->pBuffCurr[0]) << 8 | (pDecEngine->pBuffCurr[1]));
-    pDecEngine->pBuffCurr += 2;
-    iNumBitsRead = 16;
-    break;
-  case 1:
-    uiValue = pDecEngine->pBuffCurr[0];
-    pDecEngine->pBuffCurr += 1;
-    iNumBitsRead = 8;
-    break;
-  default:
-    uiValue = ((pDecEngine->pBuffCurr[0] << 24) | (pDecEngine->pBuffCurr[1]) << 16 | (pDecEngine->pBuffCurr[2]) << 8 |
-               (pDecEngine->pBuffCurr[3]));
-    pDecEngine->pBuffCurr += 4;
-    iNumBitsRead = 32;
-    break;
-  }
-  return ERR_NONE;
+int32_t DecodeBinCabacRefill (PWelsCabacDecEngine pDecEngine, uint64_t uiOffset, int32_t iBitsLeft) {
+  return DecodeBinCabacRefillInline (pDecEngine, uiOffset, iBitsLeft);
 }
 
-int32_t DecodeBinCabac (PWelsCabacDecEngine pDecEngine, PWelsCabacCtx pBinCtx, uint32_t& uiBinVal) {
-  int32_t iErrorInfo = ERR_NONE;
-  uint32_t uiState = pBinCtx->uiState;
-  uiBinVal = pBinCtx->uiMPS;
-  uint64_t uiOffset = pDecEngine->uiOffset;
-  uint64_t uiRange = pDecEngine->uiRange;
-
-  int32_t iRenorm = 1;
-  uint32_t uiRangeLPS = g_kuiCabacRangeLps[uiState][ (uiRange >> 6) & 0x03];
-  uiRange -= uiRangeLPS;
-  if (uiOffset >= (uiRange << pDecEngine->iBitsLeft)) { //LPS
-    uiOffset -= (uiRange << pDecEngine->iBitsLeft);
-    uiBinVal ^= 0x0001;
-    if (!uiState)
-      pBinCtx->uiMPS ^= 0x01;
-    pBinCtx->uiState = g_kuiStateTransTable[uiState][0];
-    iRenorm = g_kRenormTable256[uiRangeLPS];
-    uiRange = (uiRangeLPS << iRenorm);
-  } else {  //MPS
-    pBinCtx->uiState = g_kuiStateTransTable[uiState][1];
-    if (uiRange >= WELS_CABAC_QUARTER) {
-      pDecEngine->uiRange = uiRange;
-      return ERR_NONE;
-    } else {
-      uiRange <<= 1;
-    }
-  }
-  //Renorm
-  pDecEngine->uiRange = uiRange;
-  pDecEngine->iBitsLeft -= iRenorm;
-  if (pDecEngine->iBitsLeft > 0) {
-    pDecEngine->uiOffset = uiOffset;
-    return ERR_NONE;
-  }
-  uint32_t uiVal = 0;
-  int32_t iNumBitsRead = 0;
-  iErrorInfo = Read32BitsCabac (pDecEngine, uiVal, iNumBitsRead);
-  pDecEngine->uiOffset = (uiOffset << iNumBitsRead) | uiVal;
-  pDecEngine->iBitsLeft += iNumBitsRead;
-  if (iErrorInfo && pDecEngine->iBitsLeft < 0) {
-    return iErrorInfo;
-  }
-  return ERR_NONE;
-}
-
-int32_t DecodeBypassCabac (PWelsCabacDecEngine pDecEngine, uint32_t& uiBinVal) {
-  int32_t iErrorInfo = ERR_NONE;
-  int32_t iBitsLeft = pDecEngine->iBitsLeft;
-  uint64_t uiOffset = pDecEngine->uiOffset;
-  uint64_t uiRangeValue;
-
-
-  if (iBitsLeft <= 0) {
-    uint32_t uiVal = 0;
-    int32_t iNumBitsRead = 0;
-    iErrorInfo = Read32BitsCabac (pDecEngine, uiVal, iNumBitsRead);
-    uiOffset = (uiOffset << iNumBitsRead) | uiVal;
-    iBitsLeft = iNumBitsRead;
-    if (iErrorInfo && iBitsLeft == 0) {
-      return iErrorInfo;
-    }
-  }
-  iBitsLeft--;
-  uiRangeValue = (pDecEngine->uiRange << iBitsLeft);
-  if (uiOffset >= uiRangeValue) {
-    pDecEngine->iBitsLeft = iBitsLeft;
-    pDecEngine->uiOffset = uiOffset - uiRangeValue;
-    uiBinVal = 1;
-    return ERR_NONE;
-  }
-  pDecEngine->iBitsLeft = iBitsLeft;
-  pDecEngine->uiOffset = uiOffset;
-  uiBinVal = 0;
-  return ERR_NONE;
+int32_t DecodeBypassCabacRefill (PWelsCabacDecEngine pDecEngine) {
+  return DecodeBypassCabacRefillInline (pDecEngine);
 }
 
 int32_t DecodeTerminateCabac (PWelsCabacDecEngine pDecEngine, uint32_t& uiBinVal) {
