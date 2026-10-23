@@ -1,5 +1,5 @@
 include $(SRC_PATH)build/arch.mk
-SHAREDLIB_DIR = $(PREFIX)/lib
+SHAREDLIB_DIR = $(PREFIX)/$(LIBDIR_NAME)
 SHAREDLIBSUFFIX = dylib
 SHAREDLIBSUFFIXFULLVER=$(FULL_VERSION).$(SHAREDLIBSUFFIX)
 SHAREDLIBSUFFIXMAJORVER=$(SHAREDLIB_MAJORVERSION).$(SHAREDLIBSUFFIX)
@@ -13,6 +13,7 @@ SHARED += -current_version $(CURRENT_VERSION) -compatibility_version $(COMPATIBI
 CFLAGS += -Wall -fPIC -MMD -MP
 CXXFLAGS += -stdlib=libc++ -std=c++17
 LDFLAGS += -stdlib=libc++
+STATIC_LDFLAGS = -lc++ -lpthread -lm
 ifeq ($(ARCH), arm64)
 CFLAGS += -arch arm64
 LDFLAGS += -arch arm64
@@ -33,4 +34,3 @@ ASMFLAGS += -f macho
 LDFLAGS += -read_only_relocs suppress
 endif
 endif
-

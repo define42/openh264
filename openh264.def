@@ -3,5 +3,8 @@ EXPORTS
     WelsDestroyDecoder
     WelsCreateSVCEncoder
     WelsDestroySVCEncoder
+    WelsCreateRDPSVCEncoder
+    WelsDestroyRDPSVCEncoder
     WelsGetCodecVersion
     WelsGetCodecVersionEx
+    WelsGetRDPABIInfo

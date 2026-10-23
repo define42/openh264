@@ -1,0 +1,114 @@
+name: Go RDP wrapper
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Go ${{ matrix.go-version }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version:
+          - 1.22.x
+          - stable
+    env:
+      CGO_ENABLED: "1"
+      GOWORK: "off"
+      OPENH264_RDP_PREFIX: ${{ runner.temp }}/openh264-rdp
+      PKG_CONFIG_PATH: ${{ runner.temp }}/openh264-rdp/lib/pkgconfig
+      LD_LIBRARY_PATH: ${{ runner.temp }}/openh264-rdp/lib
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qq libopenh264-dev nasm pkg-config
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: false
+
+      - name: Build and install openh264-rdp
+        run: |
+          make -j"$(nproc)" libraries
+          make PREFIX="$OPENH264_RDP_PREFIX" install
+          pkg-config --validate openh264-rdp
+          pkg-config --validate openh264-rdp-static
+
+      - name: Check formatting and module files
+        working-directory: go
+        run: |
+          unformatted=$(gofmt -l .)
+          if [[ -n "$unformatted" ]]; then
+            printf 'Files need gofmt:\n%s\n' "$unformatted"
+            exit 1
+          fi
+          go mod tidy
+          module_changes=$(git status --porcelain -- go.mod go.sum)
+          if [[ -n "$module_changes" ]]; then
+            printf "go mod tidy changed module files:\n%s\n" "$module_changes"
+            exit 1
+          fi
+
+      - name: Vet
+        working-directory: go
+        run: go vet ./...
+
+      - name: Test without cgo
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+        run: go test -shuffle=on -count=1 ./...
+
+      - name: Test static codec linkage
+        working-directory: go
+        run: |
+          go test -race -shuffle=on -count=1 -tags=integration ./...
+          test_binary="$RUNNER_TEMP/openh264-rdp-static.test"
+          go test -c -tags=integration -o "$test_binary" .
+          dynamic=$(readelf -d "$test_binary")
+          if [[ "$dynamic" == *libopenh264-rdp* ]]; then
+            printf "Static-default binary unexpectedly needs openh264-rdp.so\n" >&2
+            exit 1
+          fi
+
+      - name: Test shared codec linkage
+        working-directory: go
+        run: |
+          go test -race -shuffle=on -count=1 \
+            -tags="integration openh264_shared" ./...
+          test_binary="$RUNNER_TEMP/openh264-rdp-shared.test"
+          go test -c -tags="integration openh264_shared" \
+            -o "$test_binary" .
+          dynamic=$(readelf -d "$test_binary")
+          if [[ "$dynamic" != *libopenh264-rdp.so* ]]; then
+            printf "Shared-tag binary does not need openh264-rdp.so\n" >&2
+            exit 1
+          fi
+
+          rdp_dynamic=$(readelf -d "$OPENH264_RDP_PREFIX/lib/libopenh264-rdp.so")
+          if [[ "$rdp_dynamic" != *SYMBOLIC* ]]; then
+            printf "RDP shared library is missing ELF symbolic binding\n" >&2
+            exit 1
+          fi
+
+          stock_library=$(ldconfig -p |
+            grep -m1 -o "/[^ ]*/libopenh264[.]so[.][0-9][^ ]*" || true)
+          if [[ -z "$stock_library" ]]; then
+            printf "Could not find the stock OpenH264 shared library\n" >&2
+            exit 1
+          fi
+          LD_PRELOAD="$stock_library" "$test_binary" \
+            -test.run "^TestEncoderIntegration$" \
+            -test.count=1

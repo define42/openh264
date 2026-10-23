@@ -77,9 +77,9 @@ goto :EOF
 rem function for setting
 rem ***********************************************
 :BasicSetting
-  set DllFile=openh264.dll
-  set LibFile=openh264.lib
-  set PDBFile=openh264.pdb
+  set DllFile=openh264-rdp.dll
+  set LibFile=openh264-rdp.lib
+  set PDBFile=openh264-rdp.pdb
   set UTDllFile=ut.dll
   set UTBinFile=codec_unittest.exe
   set EncBinFile=h264enc.exe

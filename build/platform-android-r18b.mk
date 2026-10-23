@@ -50,8 +50,13 @@ CFLAGS += -fstack-protector-all
 endif
 CFLAGS += -isystem $(NDKROOT)/sysroot/usr/include -isystem $(NDKROOT)/sysroot/usr/include/$(TOOLCHAIN_NAME) -D__ANDROID_API__=$(NDKLEVEL)
 CXXFLAGS += -fno-rtti -fno-exceptions
+ifeq ($(NDK_TOOLCHAIN_VERSION), clang)
+STATIC_LDFLAGS = -lc++ -lm
+else
+STATIC_LDFLAGS = -lstlport_static -lm
+endif
 LDFLAGS += --sysroot=$(SYSROOT)
-SHLDFLAGS = -Wl,--no-undefined -Wl,-z,relro -Wl,-z,now -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,-soname,lib$(PROJECT_NAME).so
+SHLDFLAGS = -Wl,-Bsymbolic -Wl,--no-undefined -Wl,-z,relro -Wl,-z,now -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,-soname,lib$(PROJECT_NAME).so
 UTSHLDFLAGS = -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,-soname,libut.so
 
 ifeq ($(NDK_TOOLCHAIN_VERSION), clang)

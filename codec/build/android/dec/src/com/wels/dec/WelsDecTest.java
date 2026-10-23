@@ -139,7 +139,7 @@ public class WelsDecTest extends Activity {
   private static final String TAG = "welsdec";
   static {
     try {
-      System.loadLibrary ("openh264");
+      System.loadLibrary ("openh264-rdp");
       System.loadLibrary ("c++_shared");
       System.loadLibrary ("welsdecdemo");
       Log.v (TAG, "Load libwelsdec successful");
@@ -148,4 +148,3 @@ public class WelsDecTest extends Activity {
     }
   }
 }
-

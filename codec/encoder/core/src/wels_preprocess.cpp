@@ -1413,17 +1413,21 @@ void WelsMoveMemory_c(uint8_t* pDstY, uint8_t* pDstU, uint8_t* pDstV,
 
   for (j = iHeight; j; j--) {
     WelsMemcpy (pDstY, pSrcY, iWidth);
-    pDstY += iDstStrideY;
-    pSrcY += iSrcStrideY;
+    if (j > 1) {
+      pDstY += iDstStrideY;
+      pSrcY += iSrcStrideY;
+    }
   }
 
   for (j = iHeight2; j; j--) {
     WelsMemcpy (pDstU, pSrcU, iWidth2);
     WelsMemcpy (pDstV, pSrcV, iWidth2);
-    pDstU += iDstStrideU;
-    pDstV += iDstStrideV;
-    pSrcU += iSrcStrideU;
-    pSrcV += iSrcStrideV;
+    if (j > 1) {
+      pDstU += iDstStrideU;
+      pDstV += iDstStrideV;
+      pSrcU += iSrcStrideU;
+      pSrcV += iSrcStrideV;
+    }
   }
 }
 

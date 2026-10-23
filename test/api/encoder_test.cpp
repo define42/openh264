@@ -5,6 +5,7 @@
 #include <string>
 #include <cstdlib>
 #include <cmath>
+#include <vector>
 
 static void GeneratePattern(uint8_t* yBuf, int yStride, uint8_t* uBuf, int uStride, uint8_t* vBuf, int vStride, int width, int height) {
   for (int y = 0; y < height; ++y) {
@@ -812,4 +813,134 @@ TEST_F(EncoderInitTest, PerFramePsnr) {
     EXPECT_GT(info.sLayerInfo[0].rPsnr[i], 30.0f) << "component " << i;
     EXPECT_LE(info.sLayerInfo[0].rPsnr[i], 99.99f) << "component " << i;
   }
+}
+
+class ScopedMotionHintEncoder {
+ public:
+  ScopedMotionHintEncoder() : encoder_ (NULL) {}
+  ~ScopedMotionHintEncoder() {
+    if (encoder_ != NULL) {
+      encoder_->Uninitialize();
+      WelsDestroySVCEncoder (encoder_);
+    }
+  }
+
+  ISVCEncoder** Address() { return &encoder_; }
+  ISVCEncoder* Get() const { return encoder_; }
+
+ private:
+  ISVCEncoder* encoder_;
+};
+
+static void CopyFrameBitstream (const SFrameBSInfo& info, std::vector<uint8_t>* pOutput) {
+  pOutput->clear();
+  for (int32_t i = 0; i < info.iLayerNum; ++i) {
+    const SLayerBSInfo& layer = info.sLayerInfo[i];
+    int32_t iLayerSize = 0;
+    for (int32_t j = 0; j < layer.iNalCount; ++j)
+      iLayerSize += layer.pNalLengthInByte[j];
+    pOutput->insert (pOutput->end(), layer.pBsBuf, layer.pBsBuf + iLayerSize);
+  }
+}
+
+// A motion-only hint must not depend on the unchanged-mask count. The two
+// encoders below see identical pictures and the same deliberately poor motion
+// vectors; only the count differs. A changed P-frame bitstream demonstrates
+// that the valid hints reached mode decision instead of merely being accepted
+// by EncodeFrame.
+TEST_F (EncoderInitTest, MotionOnlyHintAffectsModeDecision) {
+  const int32_t kWidth = 64;
+  const int32_t kHeight = 64;
+  const int32_t kMacroblockCount = (kWidth / 16) * (kHeight / 16);
+
+  SEncParamExt param;
+  encoder_->GetDefaultParams (&param);
+  param.iUsageType = CAMERA_VIDEO_REAL_TIME;
+  param.iPicWidth = kWidth;
+  param.iPicHeight = kHeight;
+  param.fMaxFrameRate = 30.0f;
+  param.iSpatialLayerNum = 1;
+  param.iTemporalLayerNum = 1;
+  param.iNumRefFrame = 1;
+  param.iRCMode = RC_OFF_MODE;
+  param.iComplexityMode = LOW_COMPLEXITY;
+  param.iEntropyCodingModeFlag = 0;
+  param.iLoopFilterDisableIdc = 1;
+  param.iMultipleThreadIdc = 1;
+  param.bEnableDenoise = false;
+  param.bEnableAdaptiveQuant = false;
+  param.bEnableBackgroundDetection = false;
+  param.bEnableLongTermReference = false;
+  param.bEnableFrameSkip = false;
+  param.bSimulcastAVC = false;
+  param.sSpatialLayers[0].iVideoWidth = kWidth;
+  param.sSpatialLayers[0].iVideoHeight = kHeight;
+  param.sSpatialLayers[0].fFrameRate = param.fMaxFrameRate;
+  param.sSpatialLayers[0].iDLayerQp = 26;
+  param.sSpatialLayers[0].sSliceArgument.uiSliceMode = SM_SINGLE_SLICE;
+
+  ScopedMotionHintEncoder hinted;
+  ASSERT_EQ (0, WelsCreateSVCEncoder (hinted.Address()));
+  ASSERT_TRUE (hinted.Get() != NULL);
+  unsigned int uiTraceLevel = WELS_LOG_ERROR;
+  hinted.Get()->SetOption (ENCODER_OPTION_TRACE_LEVEL, &uiTraceLevel);
+
+  ASSERT_EQ (0, encoder_->InitializeExt (&param));
+  ASSERT_EQ (0, hinted.Get()->InitializeExt (&param));
+
+  std::vector<uint8_t> pixels (kWidth * kHeight * 3 / 2);
+  for (int32_t y = 0; y < kHeight; ++y) {
+    for (int32_t x = 0; x < kWidth; ++x)
+      pixels[y * kWidth + x] = static_cast<uint8_t> ((x * 37 + y * 53 + x * y * 3) & 0xff);
+  }
+  for (size_t i = kWidth * kHeight; i < pixels.size(); ++i)
+    pixels[i] = static_cast<uint8_t> ((i * 29 + 17) & 0xff);
+
+  SSourcePicture basePicture;
+  memset (&basePicture, 0, sizeof (basePicture));
+  basePicture.iPicWidth = kWidth;
+  basePicture.iPicHeight = kHeight;
+  basePicture.iColorFormat = videoFormatI420;
+  basePicture.iStride[0] = kWidth;
+  basePicture.iStride[1] = basePicture.iStride[2] = kWidth / 2;
+  basePicture.pData[0] = &pixels[0];
+  basePicture.pData[1] = basePicture.pData[0] + kWidth * kHeight;
+  basePicture.pData[2] = basePicture.pData[1] + kWidth * kHeight / 4;
+
+  SFrameBSInfo disabledInfo;
+  SFrameBSInfo hintedInfo;
+  memset (&disabledInfo, 0, sizeof (disabledInfo));
+  memset (&hintedInfo, 0, sizeof (hintedInfo));
+  ASSERT_EQ (0, encoder_->EncodeFrame (&basePicture, &disabledInfo));
+  ASSERT_EQ (0, hinted.Get()->EncodeFrame (&basePicture, &hintedInfo));
+  ASSERT_EQ (videoFrameTypeIDR, disabledInfo.eFrameType);
+  ASSERT_EQ (videoFrameTypeIDR, hintedInfo.eFrameType);
+
+  std::vector<SMacroblockMotion> motion (kMacroblockCount);
+  for (int32_t i = 0; i < kMacroblockCount; ++i) {
+    motion[i].iX = 3;
+    motion[i].iY = 2;
+  }
+  SSourcePicture disabledPicture = basePicture;
+  disabledPicture.pMacroblockMotion = &motion[0];
+  disabledPicture.iMacroblockMotionCount = 0;
+  disabledPicture.uiTimeStamp = 1;
+  SSourcePicture hintedPicture = disabledPicture;
+  hintedPicture.iMacroblockMotionCount = kMacroblockCount;
+
+  memset (&disabledInfo, 0, sizeof (disabledInfo));
+  memset (&hintedInfo, 0, sizeof (hintedInfo));
+  ASSERT_EQ (0, encoder_->EncodeFrame (&disabledPicture, &disabledInfo));
+  ASSERT_EQ (0, hinted.Get()->EncodeFrame (&hintedPicture, &hintedInfo));
+  ASSERT_EQ (videoFrameTypeP, disabledInfo.eFrameType);
+  ASSERT_EQ (videoFrameTypeP, hintedInfo.eFrameType);
+
+  std::vector<uint8_t> disabledBitstream;
+  std::vector<uint8_t> hintedBitstream;
+  CopyFrameBitstream (disabledInfo, &disabledBitstream);
+  CopyFrameBitstream (hintedInfo, &hintedBitstream);
+  ASSERT_FALSE (disabledBitstream.empty());
+  ASSERT_FALSE (hintedBitstream.empty());
+  EXPECT_TRUE (disabledBitstream != hintedBitstream)
+      << "a valid motion-only hint did not affect mode decision";
 }

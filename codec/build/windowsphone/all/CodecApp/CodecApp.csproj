@@ -151,7 +151,7 @@
     <None Include="Properties\WMAppManifest.xml">
       <SubType>Designer</SubType>
     </None>
-    <Content Include="openh264.dll">
+    <Content Include="openh264-rdp.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <Content Include="welsenc.cfg">
@@ -202,7 +202,7 @@
   -->
   <ProjectExtensions />
   <PropertyGroup>
-    <PreBuildEvent>copy  /y   ..\..\..\..\..\..\..\..\bin\$(Platform)\$(Configuration)\openh264.dll    ..\..\..\
+    <PreBuildEvent>copy  /y   ..\..\..\..\..\..\..\..\bin\$(Platform)\$(Configuration)\openh264-rdp.dll    ..\..\..\
 copy  /y   ..\..\..\..\..\..\..\..\res\*.yuv    ..\..\..\
 copy  /y   ..\..\..\..\..\..\..\..\res\B*.264    ..\..\..\
 </PreBuildEvent>

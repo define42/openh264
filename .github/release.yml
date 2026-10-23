@@ -1,0 +1,18 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+  categories:
+    - title: Breaking changes
+      labels:
+        - breaking-change
+    - title: Go wrapper
+      labels:
+        - go
+    - title: Native codec and SDK
+      labels:
+        - native
+        - packaging
+    - title: Other changes
+      labels:
+        - "*"

@@ -44,9 +44,9 @@ BEGIN
             VALUE "CompanyName", "Cisco Systems Inc."
             VALUE "FileDescription", "Cisco OpenH264 codec"
             VALUE "FileVersion", "2.7.0.2610"
-            VALUE "InternalName", "openh264.dll"
+            VALUE "InternalName", "openh264-rdp.dll"
             VALUE "LegalCopyright", "� 2011-2015 Cisco and/or its affiliates. All rights reserved."
-            VALUE "OriginalFilename", "openh264.dll"
+            VALUE "OriginalFilename", "openh264-rdp.dll"
             VALUE "ProductName", "Cisco OpenH264 codec"
             VALUE "ProductVersion", "2.7.0.2610"
         END

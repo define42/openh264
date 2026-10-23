@@ -138,6 +138,7 @@ void UnchangedFrameBegin (sWelsEncCtx* pCtx, const SSourcePicture* pSrc) {
   pState->iMacroblockCount = 0;
   pState->iChangedMacroblockCount = 0;
   pState->pMotion = NULL;
+  pState->iMotionCount = 0;
   pState->pReuseDestination = NULL;
   pState->uiCodingStamp = 0;
   if (pSrc == NULL || !UnchangedConfiguration (pCtx->pSvcParam))
@@ -157,8 +158,10 @@ void UnchangedFrameBegin (sWelsEncCtx* pCtx, const SSourcePicture* pSrc) {
   const int64_t kiCount = ((int64_t)pSrc->iPicWidth + 15) / 16 * (((int64_t)pSrc->iPicHeight + 15) / 16);
   const bool kbValidPrevious = pState->pReference != NULL && pState->iWidth == pSrc->iPicWidth &&
                                pState->iHeight == pSrc->iPicHeight && pState->iQp == kpParam->sSpatialLayers[0].iDLayerQp;
-  if (kbValidPrevious && pSrc->pMacroblockMotion != NULL && (int64_t)pSrc->iMacroblockMotionCount == kiCount)
+  if (kbValidPrevious && pSrc->pMacroblockMotion != NULL && (int64_t)pSrc->iMacroblockMotionCount == kiCount) {
     pState->pMotion = pSrc->pMacroblockMotion;
+    pState->iMotionCount = pSrc->iMacroblockMotionCount;
+  }
   if (kbValidPrevious && pSrc->pUnchangedMacroblocks != NULL && (int64_t)pSrc->iUnchangedMacroblockCount == kiCount) {
     pState->pMacroblocks = pSrc->pUnchangedMacroblocks;
     pState->iMacroblockCount = pSrc->iUnchangedMacroblockCount;
@@ -176,6 +179,7 @@ void UnchangedFrameFinish (sWelsEncCtx* pCtx, const SSourcePicture* pSrc, const 
   pState->iMacroblockCount = 0;
   pState->iChangedMacroblockCount = 0;
   pState->pMotion = NULL;
+  pState->iMotionCount = 0;
   pState->pReuseDestination = NULL;
   if (!bSuccess || pSrc == NULL || pBsInfo == NULL || !UnchangedConfiguration (pCtx->pSvcParam)) {
     UnchangedFrameReset (pCtx);
@@ -471,7 +475,7 @@ namespace WelsEnc {
 bool TryMotionHintMacroblock (sWelsEncCtx* pEncCtx, SWelsMD* pWelsMd, SSlice* pSlice, SMB* pCurMb) {
   const SUnchangedFrameState* kpState = &pEncCtx->sUnchanged;
   const int32_t kiIndex = pCurMb->iMbXY;
-  if (kpState->pMotion == NULL || kiIndex < 0 || kiIndex >= kpState->iMacroblockCount)
+  if (kpState->pMotion == NULL || kiIndex < 0 || kiIndex >= kpState->iMotionCount)
     return false;
   const SMVUnitXY kFull = {kpState->pMotion[kiIndex].iX, kpState->pMotion[kiIndex].iY};
   if ((kFull.iMvX == 0 && kFull.iMvY == 0) || !HintReferenceValid (pEncCtx) ||

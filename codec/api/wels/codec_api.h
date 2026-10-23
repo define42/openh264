@@ -552,6 +552,23 @@ int  WelsCreateSVCEncoder (ISVCEncoder** ppEncoder);
 void WelsDestroySVCEncoder (ISVCEncoder* pEncoder);
 
 
+/** @brief   Create an encoder using the OpenH264 RDP implementation
+ *  @param   ppEncoder encoder
+ *  @return  CM_RETURN: 0 - success; otherwise - failed;
+ *
+ *  This fork-specific entry point prevents process-wide symbol interposition
+ *  from selecting a stock OpenH264 implementation.
+ */
+int WelsCreateRDPSVCEncoder (ISVCEncoder** ppEncoder);
+
+
+/** @brief   Destroy an encoder created by WelsCreateRDPSVCEncoder
+ *  @param   pEncoder encoder
+ *  @return  void
+ */
+void WelsDestroyRDPSVCEncoder (ISVCEncoder* pEncoder);
+
+
 /** @brief   Get the capability of decoder
  *  @param   pDecCapability  decoder capability
  *  @return  0 - success; otherwise - failed;
@@ -584,6 +601,37 @@ OpenH264Version WelsGetCodecVersion (void);
  *  @param   pVersion  struct to fill in with the version
 */
 void WelsGetCodecVersionEx (OpenH264Version* pVersion);
+
+/** RDP extension ABI version implemented by this library. */
+#define OPENH264_RDP_ABI_VERSION 1u
+
+/** RDP extension capability: SSourcePicture accepts unchanged-MB hints. */
+#define OPENH264_RDP_CAP_UNCHANGED_MACROBLOCKS (1u << 0)
+
+/** RDP extension capability: SSourcePicture accepts macroblock motion hints. */
+#define OPENH264_RDP_CAP_MACROBLOCK_MOTION (1u << 1)
+
+/**
+ * @brief Describes the fork-specific ABI implemented by the linked library.
+ *
+ * Before calling WelsGetRDPABIInfo, set uiStructSize to the number of writable
+ * bytes available at pInfo. On success, uiStructSize is set to the size used
+ * by this library. uiSourcePictureSize lets bindings reject a library built
+ * from an incompatible header, even when its base OpenH264 version matches.
+ */
+typedef struct TagOpenH264RDPABIInfo {
+  unsigned int uiStructSize;
+  unsigned int uiABIVersion;
+  unsigned int uiCapabilities;
+  unsigned int uiSourcePictureSize;
+} OpenH264RDPABIInfo;
+
+/**
+ * @brief Query the OpenH264 RDP extension ABI.
+ * @param pInfo receives the ABI descriptor; uiStructSize is input capacity
+ * @return 0 on success; 1 if pInfo is NULL; 2 if uiStructSize is too small
+ */
+int WelsGetRDPABIInfo (OpenH264RDPABIInfo* pInfo);
 
 #ifdef __cplusplus
 }

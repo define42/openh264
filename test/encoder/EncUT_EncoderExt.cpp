@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
+#include <climits>
+#include <vector>
 #include <stdlib.h>
 #include "codec_api.h"
 #include "codec_app_def.h"
 #include "extern.h"
 #include "param_svc.h"
+#include "rc.h"
 #include "svc_enc_slice_segment.h"
 #include "test_stdint.h"
 #include "utils/FileInputStream.h"
@@ -1278,4 +1281,44 @@ TEST_F (EncoderInterfaceTest, NalSizeChecking) {
   }
   iResult = pPtrEnc->Uninitialize();
   EXPECT_EQ (iResult, static_cast<int> (cmResultSuccess));
+}
+
+
+TEST (RateControlTest, SaturatesNonIncreasingTimestampAtMaximum) {
+  EXPECT_EQ (LLONG_MAX, WelsEnc::GetTimestampForRc (LLONG_MAX, LLONG_MAX, 30.0f));
+  EXPECT_EQ (1016, WelsEnc::GetTimestampForRc (1000, 1000, 60.0f));
+}
+
+TEST_F (EncoderInterfaceTest, ExtremeTimestampsDoNotOverflowStatistics) {
+  SEncParamBase sParam;
+  memset (&sParam, 0, sizeof (sParam));
+  sParam.iUsageType = CAMERA_VIDEO_REAL_TIME;
+  sParam.iPicWidth = 16;
+  sParam.iPicHeight = 16;
+  sParam.fMaxFrameRate = 30.0f;
+  sParam.iRCMode = RC_OFF_MODE;
+  ASSERT_EQ (cmResultSuccess, pPtrEnc->Initialize (&sParam));
+
+  std::vector<uint8_t> sPixels (16 * 16 * 3 / 2, 128);
+  SSourcePicture sPicture;
+  memset (&sPicture, 0, sizeof (sPicture));
+  sPicture.iColorFormat = videoFormatI420;
+  sPicture.iPicWidth = 16;
+  sPicture.iPicHeight = 16;
+  sPicture.iStride[0] = 16;
+  sPicture.iStride[1] = sPicture.iStride[2] = 8;
+  sPicture.pData[0] = &sPixels[0];
+  sPicture.pData[1] = sPicture.pData[0] + 16 * 16;
+  sPicture.pData[2] = sPicture.pData[1] + 8 * 8;
+
+  SFrameBSInfo sInfo;
+  memset (&sInfo, 0, sizeof (sInfo));
+  sPicture.uiTimeStamp = LLONG_MAX;
+  ASSERT_EQ (cmResultSuccess, pPtrEnc->EncodeFrame (&sPicture, &sInfo));
+  EXPECT_EQ (LLONG_MAX, sInfo.uiTimeStamp);
+
+  memset (&sInfo, 0, sizeof (sInfo));
+  sPicture.uiTimeStamp = LLONG_MIN;
+  ASSERT_EQ (cmResultSuccess, pPtrEnc->EncodeFrame (&sPicture, &sInfo));
+  EXPECT_EQ (LLONG_MAX, sInfo.uiTimeStamp);
 }

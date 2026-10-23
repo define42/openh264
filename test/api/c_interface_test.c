@@ -50,3 +50,7 @@ size_t GetBoolOffset (void) {
 size_t GetBoolStructSize (void) {
   return sizeof (struct bool_test_struct);
 }
+
+int GetRDPABIInfoFromC (OpenH264RDPABIInfo* pInfo) {
+  return WelsGetRDPABIInfo (pInfo);
+}

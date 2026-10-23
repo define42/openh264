@@ -1,0 +1,148 @@
+name: Release OpenH264 RDP SDK
+
+on:
+  push:
+    tags:
+      - "v*-rdp.*"
+
+permissions: {}
+
+jobs:
+  linux-amd64:
+    name: Linux amd64 SDK
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      STAGE_DIR: ${{ runner.temp }}/openh264-rdp-stage
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate native release tag
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-rdp\.[0-9]+$ ]]; then
+            printf 'Invalid native release tag: %s\n' "$GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          release_version=${GITHUB_REF_NAME#v}
+          tag_base=${release_version%%-rdp.*}
+          source_base=$(make --no-print-directory print-rdp-base-version)
+          if [[ "$tag_base" != "$source_base" ]]; then
+            printf "Release tag base %s does not match codec base %s\n" \
+              "$tag_base" "$source_base" >&2
+            exit 1
+          fi
+          source_date_epoch=$(git show -s --format=%ct "$GITHUB_SHA")
+          printf 'RDP_RELEASE_VERSION=%s\n' "$release_version" >>"$GITHUB_ENV"
+          printf 'SOURCE_DATE_EPOCH=%s\n' "$source_date_epoch" >>"$GITHUB_ENV"
+
+      - name: Build, verify, and package in Ubuntu 20.04
+        shell: bash
+        run: |
+          mkdir -p "$STAGE_DIR" "$GITHUB_WORKSPACE/dist"
+          docker run --rm --interactive \
+            --platform linux/amd64 \
+            --env DEBIAN_FRONTEND=noninteractive \
+            --env RDP_RELEASE_VERSION \
+            --env SOURCE_DATE_EPOCH \
+            --env "HOST_UID=$(id -u)" \
+            --env "HOST_GID=$(id -g)" \
+            --volume "$GITHUB_WORKSPACE:/src" \
+            --volume "$STAGE_DIR:/stage" \
+            --workdir /src \
+            ubuntu:20.04@sha256:8feb4d8ca5354def3d8fce243717141ce31e2c428701f6682bd2fafe15388214 \
+            bash -euxo pipefail <<'CONTAINER_SCRIPT'
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            binutils \
+            build-essential \
+            ca-certificates \
+            git \
+            gzip \
+            nasm \
+            pkg-config
+
+          git config --global --add safe.directory /src
+          make -j"$(nproc)" \
+            RDP_RELEASE_VERSION="$RDP_RELEASE_VERSION" \
+            libraries
+          make RDP_RELEASE_VERSION="$RDP_RELEASE_VERSION" \
+            PREFIX=/usr \
+            DESTDIR=/stage \
+            install
+
+          shared_library=$(find /stage/usr/lib \
+            -maxdepth 1 \
+            -type f \
+            -name "libopenh264-rdp.so.*" \
+            -print \
+            -quit)
+          if [[ -z "$shared_library" ]]; then
+            printf "No versioned shared library found in staged SDK\n" >&2
+            exit 1
+          fi
+
+          glibc_versions=$(
+            { readelf --version-info "$shared_library" |
+                grep -Eo "GLIBC_[0-9]+(\\.[0-9]+)+" || true; } |
+              sort -Vu
+          )
+          newer_glibc=$(
+            { printf "%s\n" "$glibc_versions"; printf "%s\n" GLIBC_2.31; } |
+              sort -Vu |
+              awk '$0 == "GLIBC_2.31" { baseline = 1; next } baseline'
+          )
+          if [[ -n "$newer_glibc" ]]; then
+            printf "Shared library requires GLIBC newer than 2.31:\n%s\n" \
+              "$newer_glibc" >&2
+            exit 1
+          fi
+          printf "Validated GLIBC requirements (maximum 2.31):\n%s\n" \
+            "$glibc_versions"
+
+          build/package-rdp-sdk.sh \
+            /stage/usr \
+            /src/dist \
+            "$RDP_RELEASE_VERSION" \
+            linux-amd64
+          chown -R "$HOST_UID:$HOST_GID" /src/dist
+          CONTAINER_SCRIPT
+
+      - name: Generate and verify checksums
+        run: |
+          cd dist
+          sha256sum openh264-rdp-*.tar.gz >SHA256SUMS
+          sha256sum --check SHA256SUMS
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          assets=(dist/openh264-rdp-*.tar.gz dist/SHA256SUMS)
+          if is_draft=$(gh release view "$GITHUB_REF_NAME" \
+            --json isDraft \
+            --jq .isDraft \
+            --repo "$GITHUB_REPOSITORY" 2>/dev/null); then
+            if [[ "$is_draft" != "true" ]]; then
+              printf "Refusing to replace assets on published release %s\n" \
+                "$GITHUB_REF_NAME" >&2
+              exit 1
+            fi
+            gh release upload "$GITHUB_REF_NAME" "${assets[@]}" \
+              --clobber \
+              --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" "${assets[@]}" \
+              --draft \
+              --generate-notes \
+              --title "OpenH264 RDP ${GITHUB_REF_NAME}" \
+              --verify-tag \
+              --repo "$GITHUB_REPOSITORY"
+          fi

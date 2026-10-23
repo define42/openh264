@@ -45,7 +45,8 @@ endif
 
 CFLAGS += -DANDROID_NDK -fpic -MMD -MP -fstack-protector-all
 CXXFLAGS += -fno-rtti -fno-exceptions
-SHLDFLAGS = -Wl,--no-undefined -Wl,-z,relro -Wl,-z,now -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,-soname,lib$(PROJECT_NAME).so
+STATIC_LDFLAGS = -lc++ -lm
+SHLDFLAGS = -Wl,-Bsymbolic -Wl,--no-undefined -Wl,-z,relro -Wl,-z,now -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,-soname,lib$(PROJECT_NAME).so
 UTSHLDFLAGS = -Wl,-z,max-page-size=16384 -Wl,-z,common-page-size=16384 -Wl,-soname,libut.so
 
 ifeq ($(NDK_TOOLCHAIN_VERSION), clang)

@@ -1,10 +1,11 @@
-project('openh264', ['c', 'cpp'],
+project('openh264-rdp', ['c', 'cpp'],
   version : '2.7.0',
   meson_version : '>= 0.52',
   default_options : [ 'warning_level=1',
                       'buildtype=release' ])
 
 major_version = '8'
+rdp_release_version = meson.project_version() + '-rdp.' + get_option('rdp_revision')
 
 cpp = meson.get_compiler('cpp')
 
@@ -38,6 +39,11 @@ encoder_inc = include_directories([
 
 system = host_machine.system()
 cpu_family = host_machine.cpu_family()
+
+shared_link_args = []
+if ['linux', 'freebsd', 'android'].contains(system)
+  shared_link_args += ['-Wl,-Bsymbolic']
+endif
 
 supported_arguments = cpp.get_supported_arguments([
   '-Wno-non-virtual-dtor',
@@ -109,10 +115,13 @@ if ['linux', 'freebsd', 'android', 'ios', 'darwin'].contains(system)
     error('FIXME: unhandled CPU family @0@ for @1@'.format(cpu_family, system))
   endif
 
-  if ['ios', 'darwin', 'android'].contains(system)
+  if ['ios', 'darwin', 'android'].contains(system) or (system == 'freebsd' and cpp.get_id() == 'clang')
     cpp_lib = '-lc++'
   endif
 elif system == 'windows'
+  if cpp.get_argument_syntax() == 'msvc'
+    cpp_lib = ''
+  endif
   if cpu_family == 'x86'
     asm_format = 'win32'
     asm_args += ['-DPREFIX', '-DX86_32']
@@ -201,8 +210,9 @@ endif
 subdir ('codec')
 subdir ('test')
 
-libopenh264 = library('openh264',
+libopenh264 = both_libraries('openh264-rdp',
   link_whole: [libcommon, libprocessing, libencoder, libdecoder],
+  link_args: shared_link_args,
   install: true,
   soversion: major_version,
   version: meson.project_version(),
@@ -214,9 +224,47 @@ openh264_dep = declare_dependency(
   include_directories: include_directories('codec/api'),
   dependencies: deps)
 
-pkg = import('pkgconfig')
-pkg.generate(libopenh264,
-  description: 'OpenH264 is a codec library which supports H.264 encoding ' +
-               'and decoding. It is suitable for use in real time ' +
-               'applications such as WebRTC.',
-)
+pc_install_dir = join_paths(get_option('libdir'), 'pkgconfig')
+pc_libdir = join_paths(get_option('prefix'), get_option('libdir'))
+pc_includedir = join_paths(get_option('prefix'), get_option('includedir'))
+
+static_archive = 'libopenh264-rdp.a'
+
+static_pc_deps = cpp_lib
+if ['linux', 'freebsd'].contains(system)
+  static_pc_deps += ' -pthread -lm'
+elif ['darwin', 'ios'].contains(system)
+  static_pc_deps += ' -pthread -lm'
+elif system == 'android'
+  static_pc_deps += ' -lm'
+endif
+
+shared_pc = configuration_data()
+shared_pc.set('prefix', get_option('prefix'))
+shared_pc.set('libdir', pc_libdir)
+shared_pc.set('includedir', pc_includedir)
+shared_pc.set('VERSION', rdp_release_version)
+shared_pc.set('LINK_LIBRARY', '-L${libdir} -lopenh264-rdp')
+shared_pc.set('LIBS', '')
+shared_pc.set('LIBS_PRIVATE', static_pc_deps)
+configure_file(
+  input: 'openh264.pc.in',
+  output: 'openh264-rdp.pc',
+  configuration: shared_pc,
+  install: true,
+  install_dir: pc_install_dir)
+
+static_pc = configuration_data()
+static_pc.set('prefix', get_option('prefix'))
+static_pc.set('libdir', pc_libdir)
+static_pc.set('includedir', pc_includedir)
+static_pc.set('VERSION', rdp_release_version)
+static_pc.set('LINK_LIBRARY', '${libdir}/' + static_archive)
+static_pc.set('LIBS', static_pc_deps)
+static_pc.set('LIBS_PRIVATE', '')
+configure_file(
+  input: 'openh264.pc.in',
+  output: 'openh264-rdp-static.pc',
+  configuration: static_pc,
+  install: true,
+  install_dir: pc_install_dir)

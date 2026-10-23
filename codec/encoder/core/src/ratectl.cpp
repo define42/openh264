@@ -46,6 +46,7 @@
 #include "utils.h"
 #include "svc_enc_golomb.h"
 
+#include <climits>
 
 namespace WelsEnc {
 
@@ -1581,7 +1582,10 @@ void  WelsRcFreeMemory (sWelsEncCtx* pEncCtx) {
 
 long long GetTimestampForRc (const long long uiTimeStamp, const long long uiLastTimeStamp, const float fFrameRate) {
   if ((uiLastTimeStamp >= uiTimeStamp) || ((uiTimeStamp == 0) && (uiLastTimeStamp != -1))) {
-    return (uiLastTimeStamp + (int32_t) (1000.0 / fFrameRate));
+    const int32_t kiFrameDuration = (int32_t) (1000.0 / fFrameRate);
+    if (uiLastTimeStamp > LLONG_MAX - kiFrameDuration)
+      return LLONG_MAX;
+    return uiLastTimeStamp + kiFrameDuration;
   }
   return uiTimeStamp;
 }

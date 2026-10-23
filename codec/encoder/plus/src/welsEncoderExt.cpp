@@ -43,6 +43,14 @@
 #include "ref_list_mgr_svc.h"
 #include "codec_ver.h"
 
+#include <limits>
+#include <new>
+
+#if defined(__cpp_exceptions) || defined(__EXCEPTIONS) || defined(_CPPUNWIND)
+#define OPENH264_RDP_EXCEPTIONS_ENABLED 1
+#else
+#define OPENH264_RDP_EXCEPTIONS_ENABLED 0
+#endif
 #include <time.h>
 #include <measure_time.h>
 #if defined(_WIN32) /*&& defined(_DEBUG)*/
@@ -164,7 +172,7 @@ CWelsH264SVCEncoder::~CWelsH264SVCEncoder() {
 
 void CWelsH264SVCEncoder::InitEncoder (void) {
 
-  m_pWelsTrace = new welsCodecTrace();
+  m_pWelsTrace = new (std::nothrow) welsCodecTrace();
   if (m_pWelsTrace == NULL) {
     return;
   }
@@ -611,11 +619,19 @@ void CWelsH264SVCEncoder::LogStatistics (const int64_t kiCurrentFrameTs, int32_t
   }
 }
 
+static int64_t ForwardTimestampDelta (const int64_t kiCurrent, const int64_t kiPrevious) {
+  if (kiCurrent <= kiPrevious)
+    return 0;
+  const uint64_t kuiDelta = static_cast<uint64_t> (kiCurrent) - static_cast<uint64_t> (kiPrevious);
+  const uint64_t kuiMax = static_cast<uint64_t> (std::numeric_limits<int64_t>::max());
+  return kuiDelta > kuiMax ? std::numeric_limits<int64_t>::max() : static_cast<int64_t> (kuiDelta);
+}
+
 void CWelsH264SVCEncoder::UpdateStatistics (SFrameBSInfo* pBsInfo,
     const int64_t kiCurrentFrameMs) {
 
   const int64_t kiCurrentFrameTs = m_pEncContext->uiLastTimestamp = pBsInfo->uiTimeStamp;
-  const int64_t kiTimeDiff = kiCurrentFrameTs - m_pEncContext->iLastStatisticsLogTs;
+  const int64_t kiTimeDiff = ForwardTimestampDelta (kiCurrentFrameTs, m_pEncContext->iLastStatisticsLogTs);
 
   int32_t iMaxDid = m_pEncContext->pSvcParam->iSpatialLayerNum - 1;
   SLayerBSInfo*  pLayerInfo = &pBsInfo->sLayerInfo[0];
@@ -654,9 +670,11 @@ void CWelsH264SVCEncoder::UpdateStatistics (SFrameBSInfo* pBsInfo,
     }
     // rate control related
     if (0 != m_pEncContext->uiStartTimestamp) {
-      if (kiCurrentFrameTs > m_pEncContext->uiStartTimestamp + 800) {
+      const int64_t kiElapsed =
+        ForwardTimestampDelta (kiCurrentFrameTs, m_pEncContext->uiStartTimestamp);
+      if (kiElapsed > 800) {
         pStatistics->fAverageFrameRate = (static_cast<float> (pStatistics->uiInputFrameCount) * 1000 /
-                                          (kiCurrentFrameTs - m_pEncContext->uiStartTimestamp));
+                                          kiElapsed);
       }
     } else {
       m_pEncContext->uiStartTimestamp = kiCurrentFrameTs;
@@ -1402,21 +1420,60 @@ void CWelsH264SVCEncoder::DumpSrcPicture (const SSourcePicture*  pSrcPic, const 
 
 using namespace WelsEnc;
 
-int32_t WelsCreateSVCEncoder (ISVCEncoder** ppEncoder) {
-  if ((*ppEncoder = new CWelsH264SVCEncoder()) != NULL) {
-    return 0;
+namespace {
+
+int32_t CreateSVCEncoderInternal (ISVCEncoder** ppEncoder) {
+  if (ppEncoder == NULL) {
+    return cmInitParaError;
   }
 
-  return 1;
+  *ppEncoder = NULL;
+#if OPENH264_RDP_EXCEPTIONS_ENABLED
+  try {
+#endif
+    *ppEncoder = new (std::nothrow) CWelsH264SVCEncoder();
+    return *ppEncoder != NULL ? cmResultSuccess : cmMallocMemeError;
+#if OPENH264_RDP_EXCEPTIONS_ENABLED
+  } catch (const std::bad_alloc&) {
+    return cmMallocMemeError;
+  } catch (...) {
+    return cmUnknownReason;
+  }
+#endif
 }
 
-void WelsDestroySVCEncoder (ISVCEncoder* pEncoder) {
+void DestroySVCEncoderInternal (ISVCEncoder* pEncoder) {
   CWelsH264SVCEncoder* pSVCEncoder = (CWelsH264SVCEncoder*)pEncoder;
 
   if (pSVCEncoder) {
-    delete pSVCEncoder;
-    pSVCEncoder = NULL;
+#if OPENH264_RDP_EXCEPTIONS_ENABLED
+    try {
+#endif
+      delete pSVCEncoder;
+#if OPENH264_RDP_EXCEPTIONS_ENABLED
+    } catch (...) {
+      // Exceptions must never cross the public C ABI.
+    }
+#endif
   }
+}
+
+}  // namespace
+
+int32_t WelsCreateSVCEncoder (ISVCEncoder** ppEncoder) {
+  return CreateSVCEncoderInternal (ppEncoder);
+}
+
+void WelsDestroySVCEncoder (ISVCEncoder* pEncoder) {
+  DestroySVCEncoderInternal (pEncoder);
+}
+
+int32_t WelsCreateRDPSVCEncoder (ISVCEncoder** ppEncoder) {
+  return CreateSVCEncoderInternal (ppEncoder);
+}
+
+void WelsDestroyRDPSVCEncoder (ISVCEncoder* pEncoder) {
+  DestroySVCEncoderInternal (pEncoder);
 }
 
 OpenH264Version WelsGetCodecVersion() {
@@ -1425,5 +1482,21 @@ OpenH264Version WelsGetCodecVersion() {
 
 void WelsGetCodecVersionEx (OpenH264Version* pVersion) {
   *pVersion = g_stCodecVersion;
+}
+
+int WelsGetRDPABIInfo (OpenH264RDPABIInfo* pInfo) {
+  if (pInfo == NULL) {
+    return 1;
+  }
+  if (pInfo->uiStructSize < sizeof (OpenH264RDPABIInfo)) {
+    return 2;
+  }
+
+  pInfo->uiStructSize = (unsigned int)sizeof (OpenH264RDPABIInfo);
+  pInfo->uiABIVersion = OPENH264_RDP_ABI_VERSION;
+  pInfo->uiCapabilities = OPENH264_RDP_CAP_UNCHANGED_MACROBLOCKS |
+                          OPENH264_RDP_CAP_MACROBLOCK_MOTION;
+  pInfo->uiSourcePictureSize = (unsigned int)sizeof (SSourcePicture);
+  return 0;
 }
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////

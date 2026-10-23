@@ -26,8 +26,10 @@ SHARED=-shared
 OBJ=o
 DESTDIR=
 LIBDIR_NAME=lib
-SHAREDLIB_DIR=$(PREFIX)/lib
-PROJECT_NAME=openh264
+SHAREDLIB_DIR=$(PREFIX)/$(LIBDIR_NAME)
+SHARED_PC_LINK_LIBRARY=-L$${libdir} -l$(PROJECT_NAME)
+PROJECT_NAME=openh264-rdp
+PC_TEMPLATE=$(SRC_PATH)openh264.pc.in
 MODULE_NAME=gmpopenh264
 GMP_API_BRANCH=Firefox135
 GTEST_VER=v1.15.2
@@ -40,6 +42,7 @@ USE_ANT=No
 
 SHAREDLIB_MAJORVERSION=8
 FULL_VERSION := 2.7.0
+RDP_RELEASE_VERSION ?= $(FULL_VERSION)-rdp.1
 
 ifeq (,$(wildcard $(SRC_PATH)gmp-api))
 HAVE_GMP_API=No
@@ -212,7 +215,10 @@ PROCESSING_UNITTEST_CFLAGS += $(CODEC_UNITTEST_CFLAGS)
 API_TEST_CFLAGS += $(CODEC_UNITTEST_CFLAGS)
 COMMON_UNITTEST_CFLAGS += $(CODEC_UNITTEST_CFLAGS)
 
-.PHONY: test gtest-bootstrap clean $(PROJECT_NAME).pc $(PROJECT_NAME)-static.pc
+.PHONY: test gtest-bootstrap clean $(PROJECT_NAME).pc $(PROJECT_NAME)-static.pc install-static-pc print-rdp-base-version
+
+print-rdp-base-version:
+	@printf "%s\n" "$(FULL_VERSION)"
 
 generate-version:
 	$(QUIET)sh $(SRC_PATH)codec/common/generate_version.sh $(SRC_PATH)
@@ -275,6 +281,11 @@ endif
 endif
 
 libraries: $(LIBPREFIX)$(PROJECT_NAME).$(LIBSUFFIX)
+
+# The upstream OSS-Fuzz integration requests the historical archive name.
+# Keep this build-only compatibility alias; install targets expose only RDP names.
+libopenh264.a: $(LIBPREFIX)$(PROJECT_NAME).$(LIBSUFFIX)
+	$(QUIET)ln -sfn $< $@
 
 # No point in building dylib for ios
 ifneq (ios, $(OS))
@@ -339,11 +350,11 @@ ifeq (True, $(PROCESS_FILES))
 endif
 endif
 
-$(PROJECT_NAME).pc: $(PROJECT_NAME).pc.in
-	@sed -e 's;@prefix@;$(PREFIX);' -e 's;@libdir@;$(PREFIX)/lib;' -e 's;@VERSION@;$(FULL_VERSION);' -e 's;@LIBS@;;' -e 's;@LIBS_PRIVATE@;$(STATIC_LDFLAGS);' < $< > $@
+$(PROJECT_NAME).pc: $(PC_TEMPLATE)
+	@sed -e 's;@prefix@;$(PREFIX);' -e 's;@libdir@;$(PREFIX)/$(LIBDIR_NAME);' -e 's;@includedir@;$(PREFIX)/include;' -e 's;@VERSION@;$(RDP_RELEASE_VERSION);' -e 's;@LINK_LIBRARY@;$(SHARED_PC_LINK_LIBRARY);' -e 's;@LIBS@;;' -e 's;@LIBS_PRIVATE@;$(STATIC_LDFLAGS);' < $< > $@
 
-$(PROJECT_NAME)-static.pc: $(PROJECT_NAME).pc.in
-	@sed -e 's;@prefix@;$(PREFIX);' -e 's;@libdir@;$(PREFIX)/lib;' -e 's;@VERSION@;$(FULL_VERSION);' -e 's;@LIBS@;$(STATIC_LDFLAGS);' -e 's;@LIBS_PRIVATE@;;' < $< > $@
+$(PROJECT_NAME)-static.pc: $(PC_TEMPLATE)
+	@sed -e 's;@prefix@;$(PREFIX);' -e 's;@libdir@;$(PREFIX)/$(LIBDIR_NAME);' -e 's;@includedir@;$(PREFIX)/include;' -e 's;@VERSION@;$(RDP_RELEASE_VERSION);' -e 's;@LINK_LIBRARY@;$${libdir}/$(LIBPREFIX)$(PROJECT_NAME).$(LIBSUFFIX);' -e 's;@LIBS@;$(STATIC_LDFLAGS);' -e 's;@LIBS_PRIVATE@;;' < $< > $@
 
 install-headers:
 	mkdir -p $(DESTDIR)$(PREFIX)/include/wels
@@ -353,9 +364,12 @@ install-static-lib: $(LIBPREFIX)$(PROJECT_NAME).$(LIBSUFFIX) install-headers
 	mkdir -p $(DESTDIR)$(PREFIX)/$(LIBDIR_NAME)
 	install -m 644 $(LIBPREFIX)$(PROJECT_NAME).$(LIBSUFFIX) $(DESTDIR)$(PREFIX)/$(LIBDIR_NAME)
 
-install-static: install-static-lib $(PROJECT_NAME)-static.pc
+install-static-pc: $(PROJECT_NAME)-static.pc
 	mkdir -p $(DESTDIR)$(PREFIX)/$(LIBDIR_NAME)/pkgconfig
-	install -m 644 $(PROJECT_NAME)-static.pc $(DESTDIR)$(PREFIX)/$(LIBDIR_NAME)/pkgconfig/$(PROJECT_NAME).pc
+	install -m 644 $(PROJECT_NAME)-static.pc $(DESTDIR)$(PREFIX)/$(LIBDIR_NAME)/pkgconfig
+
+install-static: install-static-lib install-static-pc
+	@:
 
 install-shared: $(LIBPREFIX)$(PROJECT_NAME).$(SHAREDLIBSUFFIX) install-headers $(PROJECT_NAME).pc
 	mkdir -p $(DESTDIR)$(SHAREDLIB_DIR)
@@ -370,7 +384,7 @@ ifneq ($(EXTRA_LIBRARY),)
 	install -m 644 $(EXTRA_LIBRARY) $(DESTDIR)$(PREFIX)/$(LIBDIR_NAME)
 endif
 
-install: install-static-lib install-shared
+install: install-static-lib install-static-pc install-shared
 	@:
 
 ifneq ($(HAVE_GTEST),Yes)

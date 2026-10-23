@@ -12,6 +12,7 @@ extern "C" void CheckDecoderInterface (ISVCDecoder* p, CheckFunc);
 extern "C" size_t GetBoolSize (void);
 extern "C" size_t GetBoolOffset (void);
 extern "C" size_t GetBoolStructSize (void);
+extern "C" int GetRDPABIInfoFromC (OpenH264RDPABIInfo* pInfo);
 
 // Store the 'this' pointer to verify 'this' is received as expected from C code.
 static void* gThis;
@@ -135,4 +136,37 @@ TEST (ISVCDecoderEncoderTest, CheckCAbi) {
   EXPECT_EQ (sizeof (bool), GetBoolSize()) << "Wrong size of bool type";
   EXPECT_EQ (offsetof (bool_test_struct, b), GetBoolOffset()) << "Wrong alignment of bool in a struct";
   EXPECT_EQ (sizeof (bool_test_struct), GetBoolStructSize()) << "Wrong size of struct with a bool";
+}
+
+TEST (RDPABIInfoTest, ReportsForkABIFromC) {
+  OpenH264RDPABIInfo info = {};
+  info.uiStructSize = sizeof (info);
+  ASSERT_EQ (0, GetRDPABIInfoFromC (&info));
+  EXPECT_EQ (sizeof (OpenH264RDPABIInfo), info.uiStructSize);
+  EXPECT_EQ (OPENH264_RDP_ABI_VERSION, info.uiABIVersion);
+  EXPECT_EQ (OPENH264_RDP_CAP_UNCHANGED_MACROBLOCKS |
+             OPENH264_RDP_CAP_MACROBLOCK_MOTION, info.uiCapabilities);
+  EXPECT_EQ (sizeof (SSourcePicture), info.uiSourcePictureSize);
+  EXPECT_EQ (1, GetRDPABIInfoFromC (NULL));
+
+  OpenH264RDPABIInfo undersized = {};
+  undersized.uiStructSize = sizeof (undersized) - 1;
+  undersized.uiABIVersion = 0x12345678u;
+  undersized.uiCapabilities = 0x87654321u;
+  undersized.uiSourcePictureSize = 0xabcdef01u;
+  EXPECT_EQ (2, GetRDPABIInfoFromC (&undersized));
+  EXPECT_EQ (sizeof (undersized) - 1, undersized.uiStructSize);
+  EXPECT_EQ (0x12345678u, undersized.uiABIVersion);
+  EXPECT_EQ (0x87654321u, undersized.uiCapabilities);
+  EXPECT_EQ (0xabcdef01u, undersized.uiSourcePictureSize);
+}
+
+
+TEST (RDPABIInfoTest, CreatesWithForkSpecificEntryPoints) {
+  EXPECT_EQ (cmInitParaError, WelsCreateRDPSVCEncoder (NULL));
+
+  ISVCEncoder* pEncoder = NULL;
+  ASSERT_EQ (cmResultSuccess, WelsCreateRDPSVCEncoder (&pEncoder));
+  ASSERT_NE ((ISVCEncoder*)NULL, pEncoder);
+  WelsDestroyRDPSVCEncoder (pEncoder);
 }
