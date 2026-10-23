@@ -13,8 +13,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    env:
-      STAGE_DIR: ${{ runner.temp }}/openh264-rdp-stage
 
     steps:
       - name: Check out release tag
@@ -43,6 +41,8 @@ jobs:
           printf 'SOURCE_DATE_EPOCH=%s\n' "$source_date_epoch" >>"$GITHUB_ENV"
 
       - name: Build, verify, and package in Ubuntu 20.04
+        env:
+          STAGE_DIR: ${{ runner.temp }}/openh264-rdp-stage
         shell: bash
         run: |
           mkdir -p "$STAGE_DIR" "$GITHUB_WORKSPACE/dist"

@@ -20,13 +20,19 @@ jobs:
     env:
       CGO_ENABLED: "1"
       GOWORK: "off"
-      OPENH264_RDP_PREFIX: ${{ runner.temp }}/openh264-rdp
-      PKG_CONFIG_PATH: ${{ runner.temp }}/openh264-rdp/lib/pkgconfig
-      LD_LIBRARY_PATH: ${{ runner.temp }}/openh264-rdp/lib
 
     steps:
       - name: Check out source
         uses: actions/checkout@v7
+
+      - name: Configure native SDK paths
+        shell: bash
+        run: |
+          {
+            printf "OPENH264_RDP_PREFIX=%s/openh264-rdp\n" "$RUNNER_TEMP"
+            printf "PKG_CONFIG_PATH=%s/openh264-rdp/lib/pkgconfig\n" "$RUNNER_TEMP"
+            printf "LD_LIBRARY_PATH=%s/openh264-rdp/lib\n" "$RUNNER_TEMP"
+          } >>"$GITHUB_ENV"
 
       - name: Install native build dependencies
         run: |
